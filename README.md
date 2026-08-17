@@ -70,7 +70,19 @@ Current goals:
 -   Test communication with MILLENNIUM chess computer modules
 -   Provide firmware, wiring documentation and printable STL files
 
-## ⚠️ Disclaimer
+## Trademark, Copyright and Protocol Notice
 
-This is an independent open-source hobby project and is not affiliated
-with or endorsed by MILLENNIUM 2000 GmbH.
+Chessl1nk Wireless is an independent, unofficial interoperability project and is not
+affiliated with, endorsed by, or sponsored by MILLENNIUM 2000 GmbH.
+
+MILLENNIUM, ChessLink and related product names, trademarks, documentation
+and protocol specifications remain the property of their respective rights
+holders.
+
+This project does not claim ownership of the ChessLink protocol.
+ChessLink compatibility is implemented solely for the purpose of
+interoperability between independently developed hardware and compatible
+chess software.
+
+No original MILLENNIUM firmware, software, documentation or other
+copyrighted material is distributed with this project.
