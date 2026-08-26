@@ -1,88 +1,128 @@
-# ChessL1nkWireless
+# BluetoothMax
 
-**Wireless bridge for MILLENNIUM chess computers using the ChessLink
-protocol.**
+BluetoothMax ist ein unabhängiges Open-Source-Gateway für das MILLENNIUM-
+ChessLink-Protokoll. Es ersetzt das Kabel zwischen einem Bluetooth-fähigen
+MILLENNIUM-E-Board und einem kompatiblen Schachcomputermodul durch Bluetooth LE.
 
-ChessL1nkWireless is an open-source DIY project that aims to connect
-modern Bluetooth-enabled MILLENNIUM chessboards wirelessly to compatible
-MILLENNIUM chess computer modules.
+Der aktuelle Prototyp verbindet:
 
-## 💡 The Idea
-
-Traditionally, MILLENNIUM chessboards and chess computer modules
-communicate through a 4-pin Mini-DIN cable using the ChessLink protocol.
-
-ChessL1nkWireless replaces the chessboard side of this cable with a
-small ESP32-based wireless adapter.
-
-``` text
-MILLENNIUM Bluetooth Board
-        ⇅ Bluetooth LE
-      ESP32-C3
-        ⇅ ChessLink / UART
-  4-pin Mini-DIN
-        ⇅
-MILLENNIUM Chess Computer
+```text
+MILLENNIUM Supreme T2 BT E-Board
+              ⇅ Bluetooth LE
+        ESP32-C3 SuperMini
+              ⇅ UART / 3,3 V
+       HW-027 mit MAX3232
+              ⇅ RS-232
+       4-poliger Mini-DIN
+              ⇅
+MILLENNIUM The King Schachcomputermodul
 ```
 
-The first target is the **MILLENNIUM Supreme T2** and compatible
-MILLENNIUM chess computer modules.
+## Projektstatus
 
-## 🔧 Hardware
+Das Projekt befindet sich in der Prototyp- und Protokolltestphase. Die
+bidirektionale Verbindung zum Original-E-Board und zum Original-The-King-Modul
+ist hergestellt. Aktuell wird die vollständige Mode-B-/ChessLink-Kompatibilität
+für Spiel und Analyse getestet.
 
-The prototype is designed as an easy-to-build DIY project without a
-custom PCB.
+Die veröffentlichte Firmware für Anwender bleibt unverändert, bis eine neue
+Version ausdrücklich freigegeben wird.
 
-Planned components:
+## Bauteile
 
--   ESP32-C3 SuperMini
--   4-pin Mini-DIN socket
--   9 V → 5 V DC/DC converter
--   3D-printed enclosure
--   A few passive components and wires
+- ESP32-C3 SuperMini
+- HW-027 RS-232-zu-TTL-Modul mit MAX3232
+- DC/DC-Abwärtswandler von 9 V auf 5 V
+- 4-poliger Mini-DIN-Stecker beziehungsweise passende Anschlussleitung
+- Leitungen und geeignete Steck- oder Lötverbindungen
+- optional: Gehäuse, Zugentlastung und Isoliermaterial
 
-The adapter is powered directly by the MILLENNIUM chess computer through
-the Mini-DIN connection.
+## Elektrische Schnittstellen
 
-## 🔌 Mini-DIN Interface
+### ChessLink-Kabelseite
 
-  Pin   Function
-  ----- ----------
-  1     +9 V
-  2     GND
-  3     TxD
-  4     RxD
+| Mini-DIN-Pin | Funktion |
+|---:|---|
+| 1 | +9 V Versorgung |
+| 2 | GND |
+| 3 | TxD |
+| 4 | RxD |
 
-The serial interface uses **3.3 V logic levels**.
+Die TxD/RxD-Bezeichnungen sind immer aus Sicht des jeweils sendenden Gerätes zu
+prüfen. Entscheidend ist die Signalrichtung im folgenden Verdrahtungsplan.
 
-ChessLink communication uses **38400 baud, 7 data bits, odd parity, 1
-stop bit (7O1)**.
+### Serielle Parameter
 
-## 🚧 Project Status
+- 38400 Baud
+- 7 Datenbits
+- ungerade Parität
+- 1 Stoppbit (`7O1`)
 
-**Early development / prototype stage.**
+## Verdrahtungsplan
 
-Current goals:
+### Versorgung
 
--   Build and test the ESP32 hardware
--   Establish Bluetooth LE communication with the chessboard
--   Implement the ChessLink serial bridge
--   Test communication with MILLENNIUM chess computer modules
--   Provide firmware, wiring documentation and printable STL files
+```text
+The King +9 V  ──> DC/DC IN+
+The King GND   ──> DC/DC IN-
 
-## Trademark, Copyright and Protocol Notice
+DC/DC OUT 5 V ──> ESP32-C3 5V/VBUS
+DC/DC GND      ──> ESP32-C3 GND
 
-Chessl1nk Wireless is an independent, unofficial interoperability project and is not
-affiliated with, endorsed by, or sponsored by MILLENNIUM 2000 GmbH.
+ESP32-C3 3V3   ──> HW-027 VCC (+), TTL-Seite
+ESP32-C3 GND   ──> HW-027 GND (-), TTL-Seite
+```
 
-MILLENNIUM, ChessLink and related product names, trademarks, documentation
-and protocol specifications remain the property of their respective rights
-holders.
+Alle Komponenten benötigen eine gemeinsame Masse. Die 9 V der Kabelseite
+dürfen niemals direkt an einen GPIO oder an den 3,3-V-Pin des ESP32 gelangen.
 
-This project does not claim ownership of the ChessLink protocol.
-ChessLink compatibility is implemented solely for the purpose of
-interoperability between independently developed hardware and compatible
-chess software.
+### Datenleitungen
 
-No original MILLENNIUM firmware, software, documentation or other
-copyrighted material is distributed with this project.
+```text
+The King TX
+    ──> HW-027 RS-232-Eingang
+    ──> HW-027 TTL-Ausgang
+    ──> ESP32-C3 GPIO20 (RX)
+
+ESP32-C3 GPIO21 (TX)
+    ──> HW-027 TTL-Eingang
+    ──> HW-027 RS-232-Ausgang
+    ──> The King RX
+```
+
+GPIO20 ist in der Firmware ausschließlich der Empfangspfad vom King. GPIO21 ist
+der Sendepfad zum King.
+
+## Wichtige Sicherheitshinweise
+
+- Den ESP32 ausschließlich an der **TTL-Seite** des HW-027 anschließen.
+- Vor dem Anschluss Versorgungsspannungen und Masse mit einem Multimeter prüfen.
+- Das HW-027 für die TTL-Seite mit 3,3 V betreiben.
+- Niemals RS-232-Pegel direkt mit einem ESP32-GPIO verbinden.
+- Bei Mini-DIN-Steckern auf die Blickrichtung achten: Lötseite und Steckseite
+  erscheinen spiegelverkehrt.
+- Arbeiten an Versorgung und Verdrahtung nur im ausgeschalteten Zustand.
+
+## Firmware
+
+PlatformIO-Ziel für den aktuellen Prototyp:
+
+```ini
+[env:esp32-c3-supermini]
+```
+
+Die Firmware arbeitet als bidirektionales Gateway zwischen der seriellen
+Mode-B-Schnittstelle des Schachcomputers und dem transparenten BLE-UART-Dienst
+des E-Boards.
+
+## Marken-, Urheberrechts- und Protokollhinweis
+
+BluetoothMax ist ein unabhängiges, inoffizielles Interoperabilitätsprojekt und
+steht in keiner Verbindung zu MILLENNIUM 2000 GmbH. Es wird von MILLENNIUM weder
+unterstützt noch empfohlen.
+
+MILLENNIUM, ChessLink und zugehörige Produktnamen, Marken, Dokumentationen und
+Protokollspezifikationen bleiben Eigentum ihrer jeweiligen Rechteinhaber.
+Dieses Projekt beansprucht keine Rechte am ChessLink-Protokoll. Es verteilt
+keine originale MILLENNIUM-Firmware, -Software oder sonstige urheberrechtlich
+geschützte Inhalte.
