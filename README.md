@@ -1,66 +1,67 @@
 # BluetoothMax
 
-BluetoothMax ist ein unabhängiges Open-Source-Gateway für das MILLENNIUM-
-ChessLink-Protokoll. Es ersetzt das Kabel zwischen einem Bluetooth-fähigen
-MILLENNIUM-E-Board und einem kompatiblen Schachcomputermodul durch Bluetooth LE.
+BluetoothMax is an independent open-source gateway for the MILLENNIUM ChessLink
+protocol. It replaces the cable between a Bluetooth-enabled MILLENNIUM e-board
+and a compatible chess computer module with a Bluetooth LE connection.
 
-Der aktuelle Prototyp verbindet:
+The current prototype connects:
 
 ```text
-MILLENNIUM Supreme T2 BT E-Board
+MILLENNIUM Supreme T2 BT e-board
               ⇅ Bluetooth LE
         ESP32-C3 SuperMini
-              ⇅ UART / 3,3 V
-       HW-027 mit MAX3232
+              ⇅ UART / 3.3 V
+       HW-027 with MAX3232
               ⇅ RS-232
-       4-poliger Mini-DIN
+        4-pin Mini-DIN
               ⇅
-MILLENNIUM The King Schachcomputermodul
+MILLENNIUM The King chess computer module
 ```
 
-## Projektstatus
+## Project status
 
-Das Projekt befindet sich in der Prototyp- und Protokolltestphase. Die
-bidirektionale Verbindung zum Original-E-Board und zum Original-The-King-Modul
-ist hergestellt. Aktuell wird die vollständige Mode-B-/ChessLink-Kompatibilität
-für Spiel und Analyse getestet.
+The project is currently in the prototype and protocol-testing stage. A
+bidirectional connection to the original e-board and the original The King
+module has been established. Full Mode B / ChessLink compatibility for normal
+games and analysis modes is currently being tested.
 
-Die veröffentlichte Firmware für Anwender bleibt unverändert, bis eine neue
-Version ausdrücklich freigegeben wird.
+The published firmware for users remains unchanged until a new version is
+explicitly approved for release.
 
-## Bauteile
+## Components
 
 - ESP32-C3 SuperMini
-- HW-027 RS-232-zu-TTL-Modul mit MAX3232
-- DC/DC-Abwärtswandler von 9 V auf 5 V
-- 4-poliger Mini-DIN-Stecker beziehungsweise passende Anschlussleitung
-- Leitungen und geeignete Steck- oder Lötverbindungen
-- optional: Gehäuse, Zugentlastung und Isoliermaterial
+- HW-027 RS-232-to-TTL module with MAX3232
+- 9 V to 5 V DC/DC step-down converter
+- 4-pin Mini-DIN plug or suitable connection cable
+- Wires and suitable plug or solder connections
+- Optional enclosure, strain relief and insulation material
 
-## Elektrische Schnittstellen
+## Electrical interfaces
 
-### ChessLink-Kabelseite
+### ChessLink cable side
 
-| Mini-DIN-Pin | Funktion |
+| Mini-DIN pin | Function |
 |---:|---|
-| 1 | +9 V Versorgung |
+| 1 | +9 V supply |
 | 2 | GND |
 | 3 | TxD |
 | 4 | RxD |
 
-Die TxD/RxD-Bezeichnungen sind immer aus Sicht des jeweils sendenden Gerätes zu
-prüfen. Entscheidend ist die Signalrichtung im folgenden Verdrahtungsplan.
+TxD and RxD labels must always be checked from the perspective of the device
+that transmits the signal. The signal directions in the wiring diagram below
+are authoritative.
 
-### Serielle Parameter
+### Serial settings
 
-- 38400 Baud
-- 7 Datenbits
-- ungerade Parität
-- 1 Stoppbit (`7O1`)
+- 38400 baud
+- 7 data bits
+- Odd parity
+- 1 stop bit (`7O1`)
 
-## Verdrahtungsplan
+## Wiring diagram
 
-### Versorgung
+### Power
 
 ```text
 The King +9 V  ──> DC/DC IN+
@@ -69,60 +70,59 @@ The King GND   ──> DC/DC IN-
 DC/DC OUT 5 V ──> ESP32-C3 5V/VBUS
 DC/DC GND      ──> ESP32-C3 GND
 
-ESP32-C3 3V3   ──> HW-027 VCC (+), TTL-Seite
-ESP32-C3 GND   ──> HW-027 GND (-), TTL-Seite
+ESP32-C3 3V3   ──> HW-027 VCC (+), TTL side
+ESP32-C3 GND   ──> HW-027 GND (-), TTL side
 ```
 
-Alle Komponenten benötigen eine gemeinsame Masse. Die 9 V der Kabelseite
-dürfen niemals direkt an einen GPIO oder an den 3,3-V-Pin des ESP32 gelangen.
+All components must share a common ground. The 9 V cable supply must never be
+connected directly to an ESP32 GPIO or to the ESP32 3.3 V pin.
 
-### Datenleitungen
+### Data lines
 
 ```text
 The King TX
-    ──> HW-027 RS-232-Eingang
-    ──> HW-027 TTL-Ausgang
+    ──> HW-027 RS-232 input
+    ──> HW-027 TTL output
     ──> ESP32-C3 GPIO20 (RX)
 
 ESP32-C3 GPIO21 (TX)
-    ──> HW-027 TTL-Eingang
-    ──> HW-027 RS-232-Ausgang
+    ──> HW-027 TTL input
+    ──> HW-027 RS-232 output
     ──> The King RX
 ```
 
-GPIO20 ist in der Firmware ausschließlich der Empfangspfad vom King. GPIO21 ist
-der Sendepfad zum King.
+GPIO20 is used exclusively as the receive path from The King. GPIO21 is the
+transmit path to The King.
 
-## Wichtige Sicherheitshinweise
+## Important safety notes
 
-- Den ESP32 ausschließlich an der **TTL-Seite** des HW-027 anschließen.
-- Vor dem Anschluss Versorgungsspannungen und Masse mit einem Multimeter prüfen.
-- Das HW-027 für die TTL-Seite mit 3,3 V betreiben.
-- Niemals RS-232-Pegel direkt mit einem ESP32-GPIO verbinden.
-- Bei Mini-DIN-Steckern auf die Blickrichtung achten: Lötseite und Steckseite
-  erscheinen spiegelverkehrt.
-- Arbeiten an Versorgung und Verdrahtung nur im ausgeschalteten Zustand.
+- Connect the ESP32 only to the **TTL side** of the HW-027.
+- Verify supply voltages and ground with a multimeter before connecting the
+  hardware.
+- Power the TTL side of the HW-027 with 3.3 V.
+- Never connect RS-232 levels directly to an ESP32 GPIO.
+- Check the viewing direction of Mini-DIN connectors: the solder side and plug
+  side are mirrored.
+- Disconnect power before changing any wiring.
 
 ## Firmware
 
-PlatformIO-Ziel für den aktuellen Prototyp:
+PlatformIO environment for the current prototype:
 
 ```ini
 [env:esp32-c3-supermini]
 ```
 
-Die Firmware arbeitet als bidirektionales Gateway zwischen der seriellen
-Mode-B-Schnittstelle des Schachcomputers und dem transparenten BLE-UART-Dienst
-des E-Boards.
+The firmware operates as a bidirectional gateway between the chess computer's
+serial Mode B interface and the e-board's transparent BLE UART service.
 
-## Marken-, Urheberrechts- und Protokollhinweis
+## Trademark, copyright and protocol notice
 
-BluetoothMax ist ein unabhängiges, inoffizielles Interoperabilitätsprojekt und
-steht in keiner Verbindung zu MILLENNIUM 2000 GmbH. Es wird von MILLENNIUM weder
-unterstützt noch empfohlen.
+BluetoothMax is an independent, unofficial interoperability project. It is not
+affiliated with, endorsed by or sponsored by MILLENNIUM 2000 GmbH.
 
-MILLENNIUM, ChessLink und zugehörige Produktnamen, Marken, Dokumentationen und
-Protokollspezifikationen bleiben Eigentum ihrer jeweiligen Rechteinhaber.
-Dieses Projekt beansprucht keine Rechte am ChessLink-Protokoll. Es verteilt
-keine originale MILLENNIUM-Firmware, -Software oder sonstige urheberrechtlich
-geschützte Inhalte.
+MILLENNIUM, ChessLink and related product names, trademarks, documentation and
+protocol specifications remain the property of their respective rights
+holders. This project does not claim ownership of the ChessLink protocol and
+does not distribute original MILLENNIUM firmware, software or other copyrighted
+material.
