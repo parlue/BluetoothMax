@@ -154,11 +154,10 @@ module. GPIO21 is the transmit path to the module.
 
 ## Firmware
 
-Two PlatformIO environments in this repository:
+PlatformIO environment in this repository:
 
 ```ini
-[env:esp32-c3-supermini]     ; actively developed, multi-board (BLE via NimBLE-Arduino)
-[env:esp32-c3-superminiv2]   ; frozen, ChessLink-only fallback (classic BLEDevice.h)
+[env:esp32-c3-supermini]
 ```
 
 The firmware operates as a bidirectional gateway between the chess
@@ -171,17 +170,13 @@ same Mode B representation the cable side already understands -- the rest of
 the gateway (status caching, resend-on-change, LED-clear timing) is shared
 and doesn't need to know which board produced the data.
 
-`esp32-c3-superminiv2` is a frozen snapshot of the single-board
-(ChessLink-only) gateway taken right before multi-board support was added,
-kept as a known-good fallback build and never touched by ongoing multi-board
-work.
-
 For a ready-to-flash build, see [Web installer](#web-installer) above.
 
 ## Contact
 
-- Board manufacturers who would like their board supported: dsommerfeld@mac.com
-- If you'd like a ready-built device but can't solder one yourself: dsommerfeld@mac.com
+Board manufacturers who would like their board supported, and anyone who'd
+like a ready-built device but can't solder one themselves, are welcome to
+get in touch: dsommerfeld@mac.com
 
 ## Trademark, copyright and protocol notice
 
