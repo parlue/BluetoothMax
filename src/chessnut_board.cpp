@@ -94,11 +94,7 @@ void handleBoardDataPacket(const uint8_t* data, size_t length) {
   uint8_t frame[kModeBStatusFrameLength] = {};
   frame[0] = 's';
   memcpy(frame + 1, board, 64);
-  uint8_t checksum = 0;
-  for (size_t i = 0; i < 65; ++i) checksum ^= frame[i];
-  static constexpr char hex[] = "0123456789ABCDEF";
-  frame[65] = hex[checksum >> 4];
-  frame[66] = hex[checksum & 0x0f];
+  computeModeBChecksumHex(frame + 65, frame, 65, cableHostUsesEncodedChecksum);
   onBoardStatusFrame(frame);
 }
 

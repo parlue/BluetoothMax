@@ -64,7 +64,13 @@ inline size_t modeBReplyLength(uint8_t first) {
   }
 }
 
-inline bool modeBValidBlock(const uint8_t* frame, size_t length) {
+// usedEncodedChecksum, if non-null, reports which checksum convention
+// matched (false = plain 7-bit, true = odd-parity-encoded) -- callers on
+// King's cable side use this to learn which convention the connected host
+// itself expects, so replies can be built the same way. Left untouched (not
+// written) if validation fails.
+inline bool modeBValidBlock(const uint8_t* frame, size_t length,
+                             bool* usedEncodedChecksum = nullptr) {
   if (length < 3) return false;
   auto hexNibble = [](uint8_t c) -> int {
     c &= 0x7f;
@@ -76,10 +82,53 @@ inline bool modeBValidBlock(const uint8_t* frame, size_t length) {
   const int high = hexNibble(frame[length - 2]);
   const int low = hexNibble(frame[length - 1]);
   if (high < 0 || low < 0) return false;
-  uint8_t check = 0;
-  for (size_t i = 0; i < length - 2; ++i) check ^= frame[i] & 0x7f;
-  return check == static_cast<uint8_t>((high << 4) | low);
+  const uint8_t received = static_cast<uint8_t>((high << 4) | low);
+
+  uint8_t checkPlain = 0;
+  for (size_t i = 0; i < length - 2; ++i) checkPlain ^= frame[i] & 0x7f;
+  if (received == checkPlain) {
+    if (usedEncodedChecksum != nullptr) *usedEncodedChecksum = false;
+    return true;
+  }
+
+  // Some Mode-B hosts (confirmed: Mephisto Phoenix) compute the checksum
+  // over the odd-parity-encoded wire bytes instead of the plain 7-bit
+  // values -- accept that convention too rather than rejecting the frame
+  // outright. Purely additive: anything that already validated above still
+  // does, unchanged.
+  uint8_t checkEncoded = 0;
+  for (size_t i = 0; i < length - 2; ++i) checkEncoded ^= encodeOddParity(frame[i]);
+  if (received == checkEncoded) {
+    if (usedEncodedChecksum != nullptr) *usedEncodedChecksum = true;
+    return true;
+  }
+  return false;
 }
+
+// Computes a Mode-B block checksum over data[0..length) and writes it as 2
+// uppercase hex digits to out[0..1]. useEncodedConvention selects which of
+// the two conventions modeBValidBlock() recognizes (see above) to match --
+// pass cableHostUsesEncodedChecksum so replies we generate ourselves match
+// whichever convention the connected cable host was observed to use.
+inline void computeModeBChecksumHex(uint8_t out[2], const uint8_t* data, size_t length,
+                                     bool useEncodedConvention) {
+  uint8_t check = 0;
+  for (size_t i = 0; i < length; ++i) {
+    check ^= useEncodedConvention ? encodeOddParity(data[i]) : (data[i] & 0x7f);
+  }
+  static constexpr char hex[] = "0123456789ABCDEF";
+  out[0] = static_cast<uint8_t>(hex[check >> 4]);
+  out[1] = static_cast<uint8_t>(hex[check & 0x0f]);
+}
+
+// True once an incoming cable frame has been observed to validate only under
+// the odd-parity-encoded checksum convention (see modeBValidBlock()) --
+// i.e. the connected host is not King/Millennium-compatible in this one
+// respect. Sticky for the session once set. Defined in main.cpp; drivers
+// that build their own reply checksums (currently chessnut_board.cpp's
+// status frame) read this so their output matches what the connected host
+// expects, without touching the proven default (plain) convention.
+extern bool cableHostUsesEncodedChecksum;
 
 // ---------------------------------------------------------------------------
 // Canonical square highlighting, decoded from King's own 'L' frame so a

@@ -31,6 +31,14 @@ Board detection is automatic: on every (re)connect attempt, the gateway scans
 for any known board's advertised BLE name and connects to whichever one it
 finds, with no build-time board selection needed.
 
+## Supported chess computer modules (cable side)
+
+Tested working: MILLENNIUM King and Mephisto Phoenix. Both speak Mode B over
+the cable, but not identically -- the gateway auto-detects a module's exact
+checksum convention (plain 7-bit vs. odd-parity-encoded) from its first
+frame and matches it in its own replies, so no build-time module selection
+is needed here either.
+
 ## Web installer
 
 Flash the gateway firmware directly from a supported browser (Chrome or

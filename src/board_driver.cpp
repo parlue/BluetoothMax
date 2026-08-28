@@ -65,6 +65,10 @@ size_t decodeKingLedFrame(const uint8_t frame167[167], SquareHighlight* out, siz
       if (!allHaveSourceBit && !allHaveDestBit) continue;
 
       if (count < maxOut) {
+        // File order on the wire is reversed (h..a) -- confirmed for King
+        // via three independent real captures, and now also confirmed for
+        // Mephisto Phoenix via two real move captures (e2-e4 and c7-c5,
+        // both mirrored without this correction). Same convention for both.
         const int changedFile = 7 - file;  // 0-based a..h
         const int changedRank = rankTop + 1;
         out[count].squareIndex = static_cast<uint8_t>(

@@ -174,19 +174,43 @@ void receiveFromMillenniumComputer() {
       const size_t expected = modeBCommandLength(uartFrame[0]);
       if (expected == 0) {
         ++discardedUartRxBytes;
-        const uint8_t discarded = uartFrame[0];
-        Serial.printf("[KING RX] unrecognized byte raw=%02X ascii=%02X '%c'\r\n",
-                      discarded, discarded & 0x7f,
-                      isprint(discarded & 0x7f) ? discarded & 0x7f : '.');
+        // Resyncing after a bad frame (e.g. a rejected checksum) can discard
+        // dozens of bytes one at a time -- log only the first byte of each
+        // run plus a one-line summary once resynced, instead of one line per
+        // byte, which used to flood the log to the point of being unusable.
+        static uint32_t resyncRunLength = 0;
+        static uint8_t resyncFirstByte = 0;
+        if (resyncRunLength == 0) {
+          resyncFirstByte = uartFrame[0];
+          Serial.printf("[KING RX] resync: unrecognized byte raw=%02X ascii=%02X '%c'\r\n",
+                        resyncFirstByte, resyncFirstByte & 0x7f,
+                        isprint(resyncFirstByte & 0x7f) ? resyncFirstByte & 0x7f : '.');
+        }
+        ++resyncRunLength;
         memmove(uartFrame, uartFrame + 1, --uartFrameLength);
+        if (uartFrameLength == 0 || modeBCommandLength(uartFrame[0]) != 0) {
+          if (resyncRunLength > 1) {
+            Serial.printf("[KING RX] resync: discarded %lu bytes total, resumed\r\n",
+                          static_cast<unsigned long>(resyncRunLength));
+          }
+          resyncRunLength = 0;
+        }
         continue;
       }
       if (uartFrameLength < expected) break;
-      if (modeBValidBlock(uartFrame, expected)) {
+      bool frameUsedEncodedChecksum = false;
+      if (modeBValidBlock(uartFrame, expected, &frameUsedEncodedChecksum)) {
+        if (frameUsedEncodedChecksum && !cableHostUsesEncodedChecksum) {
+          cableHostUsesEncodedChecksum = true;
+          Serial.println("Cable host uses the odd-parity-encoded checksum "
+                          "convention (confirmed: Mephisto Phoenix) -- "
+                          "matching it in our own replies from now on.");
+        }
         if (uartFrame[0] == 'L' && expected == 167) {
           // The checksum of a bare 'l' ack is content-independent, so we can
           // answer instantly instead of waiting on a BLE round trip.
-          static constexpr uint8_t localLedAck[] = {'l', '6', 'C'};
+          uint8_t localLedAck[3] = {'l', 0, 0};
+          computeModeBChecksumHex(localLedAck + 1, localLedAck, 1, cableHostUsesEncodedChecksum);
           writeFrameToKing(localLedAck, sizeof(localLedAck));
 
           // King may only accept a reply within a single probe cycle, which
@@ -230,14 +254,21 @@ void receiveFromMillenniumComputer() {
             // value can make a square sandwiched between them appear lit
             // too, purely because it shares corners with both -- the raw
             // corner data alone can't tell a real generic highlight apart
-            // from this geometric side effect. Disambiguate using what we
-            // actually know: a generic-role square that already matches the
-            // standard starting position has nothing wrong with it, so it
-            // wasn't really meant to be highlighted.
+            // from this geometric side effect. Only a New Game/reset frame
+            // (many squares highlighted at once) can actually produce this;
+            // a single generic-marked square is a normal, real move
+            // suggestion (e.g. Mephisto Phoenix marks moves generically
+            // rather than with King's distinct source/destination bits) and
+            // must never be filtered -- comparing it against the standard
+            // starting position wrongly ate every such suggestion for any
+            // piece that hadn't moved yet. A real ghost needs at least 2
+            // real neighbors plus itself, so only try elimination once at
+            // least 3 squares were decoded at once.
             size_t kept = 0;
             for (size_t i = 0; i < count; ++i) {
               bool eliminate = false;
-              if (squares[i].role == SquareHighlightRole::Generic && haveCachedBoardStatus) {
+              if (count >= 3 && squares[i].role == SquareHighlightRole::Generic &&
+                  haveCachedBoardStatus) {
                 const int file0 = squares[i].squareIndex % 8;
                 const int rank = squares[i].squareIndex / 8 + 1;
                 const int wireIndex = modeBStatusWireIndex(file0, rank);
@@ -261,6 +292,17 @@ void receiveFromMillenniumComputer() {
         }
       } else {
         ++discardedUartRxBytes;
+        // Dump the full raw frame as one line (mirrors [L RAW] for a valid
+        // L frame) plus the computed-vs-received checksum, since the
+        // byte-by-byte resync log below is too fragmented to diagnose a
+        // consistently-wrong checksum from a new/unproven host device.
+        uint8_t computedChecksum = 0;
+        for (size_t i = 0; i + 2 < expected; ++i) computedChecksum ^= uartFrame[i] & 0x7f;
+        Serial.print("[BAD CHECKSUM RAW] ");
+        Serial.write(uartFrame, expected);
+        Serial.println();
+        Serial.printf("[BAD CHECKSUM CALC] computed=%02X received=%c%c\r\n", computedChecksum,
+                      uartFrame[expected - 2], uartFrame[expected - 1]);
         Serial.printf("[KING RX] bad checksum on %c frame (%u bytes), discarding first byte\r\n",
                       static_cast<char>(uartFrame[0] & 0x7f),
                       static_cast<unsigned>(expected));
@@ -281,6 +323,7 @@ void receiveFromMillenniumComputer() {
 bool haveAnyBoardStatus() { return haveCachedBoardStatus; }
 
 uint32_t autonomousStatusIntervalMs = kFallbackAutoReportIntervalMs;
+bool cableHostUsesEncodedChecksum = false;
 
 size_t writeFrameToKing(const uint8_t* logicalFrame, size_t length) {
   // Pre-encode odd parity into bit 7 and send as plain 8N1: this produces
