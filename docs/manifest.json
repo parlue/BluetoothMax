@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v1.0",
+  "version": "v2.0",
   "new_install_prompt_erase": true,
   "builds": [
     {

@@ -1,22 +1,35 @@
 # BluetoothMax
 
-BluetoothMax is an independent open-source gateway for the MILLENNIUM ChessLink
-protocol. It replaces the cable between a Bluetooth-enabled MILLENNIUM e-board
-and a compatible chess computer module with a Bluetooth LE connection.
-
-The current prototype connects:
+BluetoothMax is an independent open-source Bluetooth LE gateway for chess
+computer modules that speak the ChessLink (Mode B) protocol over a cable. It
+replaces the cable between the chess computer module and a Bluetooth-enabled
+e-board with a Bluetooth LE connection -- and, unlike a single-board bridge,
+it scans for and connects to **whichever supported e-board is present** at
+runtime, translating each board's own native protocol to and from Mode B on
+the fly. One firmware image, multiple board brands.
 
 ```text
-MILLENNIUM Supreme T2 BT e-board
-              ⇅ Bluetooth LE
-        ESP32-C3 SuperMini
-              ⇅ UART / 3.3 V
-       HW-027 with MAX3232
-              ⇅ RS-232
-        4-pin Mini-DIN
-              ⇅
 Generic chess computer module with DIN connector
+              ⇅
+        4-pin Mini-DIN
+              ⇅ RS-232
+       HW-027 with MAX3232
+              ⇅ UART / 3.3 V
+        ESP32-C3 SuperMini
+              ⇅ Bluetooth LE
+   MILLENNIUM Supreme T2 BT  --  or --  Chessnut Air / GO / Pro
 ```
+
+## Supported e-boards
+
+| Board | Status |
+|---|---|
+| MILLENNIUM Supreme T2 BT (and other genuine ChessLink boards) | Working -- native Mode B relayed as-is |
+| Chessnut Air / GO / Pro | Working -- Chessnut's own BLE protocol translated to/from Mode B, including LED move suggestions and New Game/reset highlighting |
+
+Board detection is automatic: on every (re)connect attempt, the gateway scans
+for any known board's advertised BLE name and connects to whichever one it
+finds, with no build-time board selection needed.
 
 ## Web installer
 
@@ -31,23 +44,35 @@ served.
 
 ## Project status
 
-**Working.** The gateway holds a full, continuous game exchange between the
-chess computer module and the e-board: the module reads and writes its
-EEPROM registers over the cable exactly as it would with the original wired
-peripheral, LED move suggestions are decoded and forwarded correctly, and
-moves (including castling) are tracked and confirmed correctly in both
-directions for the length of a real game.
+**Working**, against both a genuine ChessLink board and a Chessnut board.
+The gateway holds a full, continuous game exchange between the chess
+computer module and whichever e-board it's connected to: the module reads
+and writes its EEPROM registers over the cable exactly as it would with the
+original wired peripheral, LED move suggestions are decoded and forwarded
+correctly (including New Game/reset highlighting on boards that need it
+translated), and moves (including castling) are tracked and confirmed
+correctly in both directions for the length of a real game.
 
-Getting here took a long protocol- and hardware-level investigation. The
-short version: the Mode B/ChessLink protocol implementation (framing, odd
-parity, checksums, status/LED encoding, register semantics) was correct
-early on and cross-validated against multiple independent open-source
-ChessLink implementations. The actual, final blocker turned out to be the
-**physical pin assignment of the hand-built 4-pin Mini-DIN cable** between
-the gateway and the chess computer module -- see
+Getting the cable side working took a long protocol- and hardware-level
+investigation. The short version: the Mode B/ChessLink protocol
+implementation (framing, odd parity, checksums, status/LED encoding, register
+semantics) was correct early on and cross-validated against multiple
+independent open-source ChessLink implementations. The actual, final blocker
+turned out to be the **physical pin assignment of the hand-built 4-pin
+Mini-DIN cable** between the gateway and the chess computer module -- see
 [Electrical interfaces](#electrical-interfaces) below for the
 confirmed-correct pinout. No amount of protocol-level correctness could work
 around a cable that wasn't wired the way the module's receiver expected.
+
+Adding Chessnut support meant translating between two genuinely different
+LED conventions: ChessLink boards represent LED state as a 9x9 grid of
+corner-shared points (so a highlighted square shares its corners with its
+neighbors), while Chessnut boards have one independent LED per square. The
+gateway decodes the corner grid into a plain list of highlighted squares,
+disambiguating geometric side effects (two highlighted squares that are two
+apart in the same file/rank can make the square between them look lit purely
+because it shares corners with both) using the board's own known piece
+positions.
 
 The published firmware for users remains unchanged until a new version is
 explicitly approved for release.
@@ -146,18 +171,27 @@ module. GPIO21 is the transmit path to the module.
 
 ## Firmware
 
-PlatformIO environment in this repository:
+Two PlatformIO environments in this repository:
 
 ```ini
-[env:esp32-c3-supermini]
+[env:esp32-c3-supermini]     ; actively developed, multi-board (BLE via NimBLE-Arduino)
+[env:esp32-c3-superminiv2]   ; frozen, ChessLink-only fallback (classic BLEDevice.h)
 ```
 
 The firmware operates as a bidirectional gateway between the chess
-computer's serial Mode B interface and the e-board's transparent BLE UART
-service: it scans for and connects to the e-board over BLE, and speaks Mode B
-over the cable to the chess computer module, translating and forwarding
-board status, LED move suggestions, and register reads/writes between the
-two sides.
+computer's serial Mode B interface and whichever e-board's own BLE protocol
+it connects to: on the cable side it always speaks Mode B (framing, odd
+parity, checksums, LED encoding, register reads/writes) exactly as a genuine
+peripheral would; on the BLE side, a real ChessLink board is relayed as-is,
+while a Chessnut board's own binary protocol is translated to and from the
+same Mode B representation the cable side already understands -- the rest of
+the gateway (status caching, resend-on-change, LED-clear timing) is shared
+and doesn't need to know which board produced the data.
+
+`esp32-c3-superminiv2` is a frozen snapshot of the single-board
+(ChessLink-only) gateway taken right before multi-board support was added,
+kept as a known-good fallback build and never touched by ongoing multi-board
+work.
 
 For a ready-to-flash build, see [Web installer](#web-installer) above.
 
@@ -166,8 +200,8 @@ For a ready-to-flash build, see [Web installer](#web-installer) above.
 BluetoothMax is an independent, unofficial interoperability project. It is not
 affiliated with, endorsed by or sponsored by MILLENNIUM 2000 GmbH.
 
-MILLENNIUM, ChessLink and related product names, trademarks, documentation and
-protocol specifications remain the property of their respective rights
-holders. This project does not claim ownership of the ChessLink protocol and
-does not distribute original MILLENNIUM firmware, software or other copyrighted
-material.
+MILLENNIUM, ChessLink, Chessnut and related product names, trademarks,
+documentation and protocol specifications remain the property of their
+respective rights holders. This project does not claim ownership of the
+ChessLink or Chessnut protocols and does not distribute original firmware,
+software or other copyrighted material from either vendor.
