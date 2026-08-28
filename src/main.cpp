@@ -57,14 +57,8 @@ bool haveCachedBoardStatus = false;
 uint32_t lastAutonomousStatusMs = 0;
 uint8_t lastStatusSentToKing[67] = {};
 bool haveSentStatusToKing = false;
-// Matches a real board's own scan-rate-driven auto-report cadence: register 1
-// ("board scan time") defaults to 0x14 (20); 20*2048/1000 ~= 41ms is the real
-// interval a genuine Mode-B board reports on in "update every scan" mode --
-// not once a second, which is 24x slower than King likely expects. This is
-// only a fallback now -- see queryBoardRegister()/pendingRegisterQuery1: we
-// proactively read the *real* board's own register 1 on connect (mirroring
-// what CynusLink/Diablillo do to any board they talk to) and use its actual
-// value instead of assuming this default is correct for this specific board.
+// Fallback report interval; overwritten by the board's own scan-time
+// register (see queryBoardRegister()) once known.
 constexpr uint32_t kAutonomousStatusIntervalMs = 41;
 uint32_t autonomousStatusIntervalMs = kAutonomousStatusIntervalMs;
 bool pendingRegisterQuery1 = false;
@@ -126,13 +120,6 @@ size_t replyLength(uint8_t first) {
   switch (first & 0x7f) {
     case 's': return 67;
     case 'x': case 'l': return 3;
-    // 'r' is 'r' + 2 hex addr + 2 hex value + 2 hex checksum = 7 bytes, not
-    // 5 -- confirmed against CynusLink's own real, King-proven source
-    // (`sendCL("r" + hx(a) + hx(ee[a]))`, checksum appended automatically)
-    // and cross-checked against our own DiablilloSniffer test project's
-    // identical reply format. Never exercised before since King itself
-    // never sends 'R' directly, so this bug had no visible effect until we
-    // started issuing our own R queries to the real board below.
     case 'r': return 7;
     case 'v': case 'w': return 7;
     default: return 0;
@@ -246,16 +233,9 @@ bool connectBoard() {
     bleClient->setClientCallbacks(new ClientCallbacks());
   }
 
-  // CynusLink (proven to feed King moves successfully end-to-end) explicitly
-  // requests a fast connection (15-30ms interval, no slave latency, 2s
-  // supervision timeout) as soon as it knows the peer address, before ever
-  // connecting -- confirmed via DiablilloSniffer testing that a slow/default
-  // connection interval alone can silently defeat an otherwise-correct
-  // low-latency status-forwarding architecture, regardless of how fast our
-  // own software reacts. `esp_ble_gap_set_prefer_conn_params` is this
-  // project's master-role equivalent of CynusLink's peripheral-role
-  // `updateConnParams` (this project connects TO the real board as a BLE
-  // client, the opposite role from CynusLink/DiablilloSniffer).
+  // Request a fast connection interval before connecting -- a slow/default
+  // interval can silently defeat low-latency status forwarding regardless
+  // of how fast the rest of this code reacts.
   esp_ble_gap_set_prefer_conn_params(*address.getNative(), 12, 24, 0, 200);
 
   Serial.printf("Connecting to %s ...\r\n", address.toString().c_str());
@@ -294,7 +274,7 @@ bool connectBoard() {
   ledState = LedState::Connected;
 
   pendingVersionQuery = true;
-  queryBoardVersion();    // matches Diablillo's own observed connect order: V, then S/R.
+  queryBoardVersion();
   pendingRegisterQuery1 = true;
   pendingRegisterQuery2 = true;
   queryBoardRegister(1);  // "board scan time" -- drives our auto-report interval.
@@ -334,13 +314,9 @@ void requestBoardStatus() {
   lastBleFrameSentMs = millis();
 }
 
-// Reads one of the real board's own registers (mirroring CynusLink's/
-// Diablillo's own proactive R-query behavior toward any board they connect
-// to -- confirmed via DiablilloSniffer testing that a proven-working bridge
-// does this unconditionally on connect, independent of anything King asks).
-// The reply is intercepted and consumed in sendBleDataToMillenniumComputer()
-// (via pendingRegisterQuery1/2), not forwarded to King -- it's our own
-// diagnostic query, not something King requested.
+// Reads one of the real board's own EEPROM-style registers. The reply is
+// intercepted in sendBleDataToMillenniumComputer() and consumed internally,
+// not forwarded to King (King itself never sends 'R' on the cable).
 void queryBoardRegister(uint8_t addr) {
   if (!bleConnected()) return;
   static constexpr char hex[] = "0123456789ABCDEF";
@@ -357,13 +333,8 @@ void queryBoardRegister(uint8_t addr) {
   lastBleFrameSentMs = millis();
 }
 
-// Diablillo (proven working) queries the board's version ('V') immediately
-// on connect, before even its first status request -- confirmed via
-// DiablilloSniffer's first real capture ("V56 then S53, in that order,
-// immediately"). This project never sent V at all before, a real behavioral
-// gap versus a working bridge. The reply is intercepted and consumed in
-// sendBleDataToMillenniumComputer() (via pendingVersionQuery), not forwarded
-// to King -- King itself never sends V on the cable in any capture so far.
+// Queries the board's firmware version on connect. The reply is intercepted
+// and consumed internally, not forwarded to King.
 void queryBoardVersion() {
   if (!bleConnected()) return;
   static constexpr char hex[] = "0123456789ABCDEF";
@@ -493,33 +464,21 @@ void receiveFromMillenniumComputer() {
       if (uartFrameLength < expected) break;
       if (validBlock(uartFrame, expected)) {
         if (uartFrame[0] == 'L' && expected == 167) {
-          // Elfacun's own bridge (Diablillo) proves this: the checksum of a
-          // handshake ack like a bare 'l' never depends on the LED payload,
-          // so a proven Mode-B bridge answers L commands locally and
-          // instantly instead of waiting on a round trip to the real board.
-          // Elfacun's board_b.cpp explicitly skips its own BLE-relayed ack
-          // once it recognizes a Diablillo bridge, trusting the bridge to
-          // have already answered King directly over the cable.
+          // The checksum of a bare 'l' ack is content-independent, so we can
+          // answer instantly instead of waiting on a BLE round trip.
           static constexpr uint8_t localLedAck[] = {'l', '6', 'C'};
           writeFrameToKing(localLedAck, sizeof(localLedAck));
           suppressNextRealLedAck = true;
 
-          // King appears to probe repeatedly on its own (observed sending
-          // fresh L frames over and over with nothing pressed) and may only
-          // accept a reply that completes within a single probe cycle. A
-          // fresh BLE round trip to the real board is too slow for that --
-          // send whatever we already have cached instantly, right alongside
-          // the l-ack, so it has a chance to land within the same cycle.
-          // Still also kick off a fresh fetch to keep the cache current.
+          // King may only accept a reply within a single probe cycle, which
+          // a fresh BLE round trip can miss -- send the cached status
+          // immediately alongside the ack, then also kick off a fresh fetch.
           if (haveCachedBoardStatus) {
             writeFrameToKing(cachedBoardStatus, sizeof(cachedBoardStatus));
           }
           requestBoardStatus();
           ledsAwaitingClear = true;
 
-          // Diagnostic-only: log the LED grid content whenever it changes,
-          // so a real move suggestion (a localized pattern) is visually
-          // distinguishable from the generic New-Game baseline in the log.
           static uint8_t lastLedFrame[167] = {};
           static bool haveLastLedFrame = false;
           if (!haveLastLedFrame || memcmp(lastLedFrame, uartFrame, 167) != 0) {
@@ -538,11 +497,6 @@ void receiveFromMillenniumComputer() {
             Serial.println();
           }
         }
-        // Preserve every valid Mode-B command and its original order so the
-        // BLE peer's LEDs and state stay in sync -- required both for a
-        // physical board's own LED display and for a robot-side gateway
-        // (e.g. CynusLink) that decodes King's suggested move from this
-        // content to drive its own hardware.
         queueUartFrameForBle(uartFrame, expected);
       } else {
         ++discardedUartRxBytes;
@@ -562,9 +516,9 @@ void receiveFromMillenniumComputer() {
 }
 
 size_t writeFrameToKing(const uint8_t* logicalFrame, size_t length) {
-  // Emit the exact Mode-B wire image explicitly: seven data bits followed by
-  // the odd-parity bit.  Sending that pre-encoded byte as 8N1 produces the
-  // same 10-bit waveform while avoiding the ESP32-C3 hardware 7O1 TX path.
+  // Pre-encode odd parity into bit 7 and send as plain 8N1: this produces
+  // the same 10-bit wire waveform as native 7O1 framing, which the ESP32-C3
+  // UART hardware cannot generate directly.
   uint8_t encoded[kFrameBufferSize] = {};
   for (size_t i = 0; i < length; ++i) {
     encoded[i] = encodeOddParity(logicalFrame[i]);
@@ -587,9 +541,8 @@ void sendBleDataToMillenniumComputer() {
       }
       if (bleFrameLength < expected) break;
       if (validBlock(bleFrame, expected)) {
-        // 'r' replies here are answers to our own queryBoardRegister() calls
-        // (King itself never sends 'R' on the cable, per extensive earlier
-        // testing) -- consume them internally and don't forward to King.
+        // 'v'/'r' replies here answer our own proactive queries on connect;
+        // King never asks for these, so they're consumed internally.
         bool suppressAsOwnQueryReply = false;
         if (bleFrame[0] == 'v' && pendingVersionQuery) {
           pendingVersionQuery = false;
@@ -626,17 +579,6 @@ void sendBleDataToMillenniumComputer() {
             }
           }
         }
-        // NOTE: previously mirrored each rank's 8 files here (h..a -> a..h)
-        // before forwarding to King. That mirror was derived from reading
-        // the real board's raw output for our OWN understanding (isolation
-        // test: a move the board displayed as c2-c4 showed up in raw data
-        // at the position an a..h reading would call f2-f4) -- but it was
-        // never independently confirmed that King actually wants the
-        // mirrored version. DiablilloSniffer's proven wireIndex() (matched
-        // 3 real King captures: g1-f3, e2-e4, d2-d4) sends the *raw*,
-        // unmirrored h..a order directly to King/Diablillo, unmodified, and
-        // that's what got King to actually play multiple moves. So: forward
-        // the real board's status to King exactly as received, unmirrored.
         if (bleFrame[0] == 's' &&
             (!haveLoggedStatus || memcmp(lastLoggedStatus, bleFrame, 67) != 0)) {
           memcpy(lastLoggedStatus, bleFrame, 67);
@@ -651,33 +593,24 @@ void sendBleDataToMillenniumComputer() {
           haveCachedBoardStatus = true;
           lastAutonomousStatusMs = millis();
           if (wasFirstStatus || ledsAwaitingClear) {
-            // A real cabled board physically clears its own setup LEDs once
-            // it has confirmed the position -- Diablillo visibly does this
-            // to the real board too. Actually clear them (not just fake the
-            // ack to King) so the board's own genuine 'x' reply, carrying
-            // real confirmation, flows to King through the normal path.
-            // Re-fires after every King L, not just the very first connect.
+            // Physically clear the board's setup LEDs once its position is
+            // confirmed, so its own genuine 'x' ack flows to King normally.
             clearBoardLeds();
             ledsAwaitingClear = false;
           }
         }
-        // King already got an instant local 'l' ack when it sent the L
-        // command (see receiveFromMillenniumComputer); the real board's own
-        // genuine ack is redundant and must not be sent a second time.
+        // King already got an instant local 'l' ack for its L command; the
+        // real board's own genuine ack would be redundant.
         const bool redundantLedAck = bleFrame[0] == 'l' && suppressNextRealLedAck;
         if (redundantLedAck) {
           suppressNextRealLedAck = false;
         } else if (suppressAsOwnQueryReply) {
-          // Consumed above; King never asked for this, so it doesn't get it.
+          // Consumed above; King never asked for this.
         } else {
-          // Elfacun's proven Mode-B board sends the native status order
-          // (white home rank first). Forward every reply unchanged and
-          // unprompted by us -- King drives all requests, we only relay.
           const size_t written = writeFrameToKing(bleFrame, expected);
           if (bleFrame[0] == 's') {
-            // Keep the periodic resend below (loop()) in sync with what was
-            // just put on the wire, so it doesn't immediately re-send the
-            // exact same frame again on its next tick.
+            // Keep the periodic resend in loop() in sync with what was just
+            // sent, so it doesn't immediately resend the same frame.
             memcpy(lastStatusSentToKing, bleFrame, sizeof(lastStatusSentToKing));
             haveSentStatusToKing = true;
           }
@@ -698,11 +631,9 @@ void sendBleDataToMillenniumComputer() {
 }
 
 #if BOARD_ISOLATION_TEST_MODE
-// Drives the real board directly over BLE with no King/cable involved at
-// all, to see exactly what the board does on its own: connect, ask for
-// status, show a move (the exact L frame King itself sent for e2-e4 in an
-// earlier session), then log everything the board sends afterwards so we
-// can see if it produces anything beyond what we already forward to King.
+// Drives the real board directly over BLE with no King/cable involved, to
+// see what the board does on its own: connect, request status, show a move,
+// then log everything it sends afterwards.
 void sendRawFrameToBoard(const uint8_t* frame, size_t length) {
   if (!bleConnected()) return;
   uint8_t encoded[kFrameBufferSize];
@@ -771,14 +702,11 @@ void runBoardIsolationTest() {
     testStep = 1;
     testStepAt = nowMs + 2000;
   } else if (testStep == 1 && static_cast<int32_t>(nowMs - testStepAt) >= 0) {
-    // Exact 167-byte L frame captured from a real King session showing
-    // e2-e4 highlighted (active-values=58 in our own diagnostic log).
     static constexpr uint8_t moveFrame[] =
         "L0FFFFFFF000000FFFFFFFFFFFF000000FFFFFFFFFFFF000000FFFFFFFFFFFF"
         "000000FFFFFFFFFFFF000000FFFFFFFFFFFFF0F000FFFFFFFFFFFFF0F000FF"
         "FFFFFFFFFF000000FFFFFFFFFFFF000000FFFFFF3A";
-    Serial.println("[ISOLATION TEST] Sending L frame (e2-e4 highlighted, "
-                    "captured verbatim from a real King session).");
+    Serial.println("[ISOLATION TEST] Sending L frame (e2-e4 highlighted).");
     sendRawFrameToBoard(moveFrame, sizeof(moveFrame) - 1);
     testStep = 2;
     Serial.println("[ISOLATION TEST] Now make the move on the board; "
@@ -790,9 +718,8 @@ void runBoardIsolationTest() {
 }  // namespace
 
 void setup() {
-  // The King sends its Mode-B identification/configuration immediately after
-  // power-up. Start its UART before USB logging and before any BLE scan so
-  // those first V/W frames remain in the hardware RX buffer.
+  // King sends its Mode-B identification immediately after power-up; start
+  // its UART before USB logging and any BLE scan so those bytes aren't lost.
   MillenniumSerial.setRxBufferSize(4096);
   MillenniumSerial.begin(MILLENNIUM_BAUD, SERIAL_8N1,
                           kMillenniumRxPin, kMillenniumTxPin);
@@ -849,18 +776,10 @@ void loop() {
   sendBleDataToMillenniumComputer();
   transmitQueuedUartFrame();
 
-  // Every real status CHANGE is already forwarded to King immediately, the
-  // instant it arrives from the real board (see sendBleDataToMillenniumComputer).
-  // This periodic check used to unconditionally re-blast the same cached
-  // status to King every interval tick regardless of whether anything
-  // changed -- at the real board's actual ~62ms scan rate that's a
-  // continuous flood of identical 67-byte frames, and a live capture showed
-  // King's own cable RX line picking up stray bytes matching the flood's
-  // repeated 'p' (pawn) characters -- almost certainly crosstalk/overrun
-  // from this needless traffic, not anything King itself sent. CynusLink
-  // (the proven-working reference) only ever sends on an actual state
-  // change, never unconditionally -- match that: only resend here if the
-  // cache differs from what we last actually put on the wire to King.
+  // Status changes are already forwarded to King immediately on arrival;
+  // this periodic tick only resends if the cache differs from what was
+  // last actually put on the wire, to avoid flooding the cable with
+  // identical frames at the board's own scan rate.
   if (haveCachedBoardStatus &&
       static_cast<uint32_t>(millis() - lastAutonomousStatusMs) >= autonomousStatusIntervalMs) {
     lastAutonomousStatusMs = millis();

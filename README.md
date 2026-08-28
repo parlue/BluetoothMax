@@ -56,7 +56,7 @@ explicitly approved for release.
 
 - ESP32-C3 SuperMini
 - HW-027 RS-232-to-TTL module with MAX3232
-- 9 V to 3.2 V DC/DC step-down converter
+- 9 V to 3.2 V DC/DC step-down converter (TBD -- exact part/type to be filled in)
 - 4-pin Mini-DIN plug or suitable connection cable
 - Wires and suitable plug or solder connections
 - Optional enclosure, strain relief and insulation material
@@ -102,14 +102,14 @@ ChessLink implementations handle the same spec text.
 ### Power
 
 ```text
-Module +9 V    ──> DC/DC IN+
-Module GND     ──> DC/DC IN-
+Module +9 V     ──> DC/DC IN+
+Module GND      ──> DC/DC IN-
 
-DC/DC OUT 5 V ──> ESP32-C3 5V/VBUS
-DC/DC GND      ──> ESP32-C3 GND
+DC/DC OUT 3.2 V ──> ESP32-C3 3V3
+DC/DC GND       ──> ESP32-C3 GND
 
-ESP32-C3 3V3   ──> HW-027 VCC (+), TTL side
-ESP32-C3 GND   ──> HW-027 GND (-), TTL side
+ESP32-C3 3V3    ──> HW-027 VCC (+), TTL side
+ESP32-C3 GND    ──> HW-027 GND (-), TTL side
 ```
 
 All components must share a common ground. The 9 V cable supply must never be
