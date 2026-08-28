@@ -146,25 +146,18 @@ module. GPIO21 is the transmit path to the module.
 
 ## Firmware
 
-PlatformIO environments in this repository:
+PlatformIO environment in this repository:
 
 ```ini
-[env:esp32-c3-supermini]                    ; normal gateway firmware
-[env:esp32-c3-supermini-king-simulator]     ; cable-only diagnostic, no BLE/board
+[env:esp32-c3-supermini]
 ```
 
-The main firmware operates as a bidirectional gateway between the chess
+The firmware operates as a bidirectional gateway between the chess
 computer's serial Mode B interface and the e-board's transparent BLE UART
 service: it scans for and connects to the e-board over BLE, and speaks Mode B
 over the cable to the chess computer module, translating and forwarding
 board status, LED move suggestions, and register reads/writes between the
 two sides.
-
-`king-simulator` builds a firmware variant that simulates a fully compliant
-Mode B peripheral directly over the cable, with zero BLE and no e-board
-involved at all -- useful for isolating whether a given chess computer
-module's cable and serial reception is behaving correctly, independent of
-anything on the BLE side.
 
 For a ready-to-flash build, see [Web installer](#web-installer) above.
 
