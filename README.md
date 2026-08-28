@@ -56,7 +56,7 @@ explicitly approved for release.
 
 - ESP32-C3 SuperMini
 - HW-027 RS-232-to-TTL module with MAX3232
-- 9 V to 5 V DC/DC step-down converter
+- 9 V to 3.2 V DC/DC step-down converter
 - 4-pin Mini-DIN plug or suitable connection cable
 - Wires and suitable plug or solder connections
 - Optional enclosure, strain relief and insulation material
