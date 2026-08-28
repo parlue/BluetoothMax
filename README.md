@@ -89,7 +89,7 @@ explicitly approved for release.
 
 - ESP32-C3 SuperMini
 - HW-027 RS-232-to-TTL module with MAX3232
-- 9 V to 3.2 V DC/DC step-down converter (TBD -- exact part/type to be filled in)
+- 9 V to 3.2 V DC/DC step-down converter (Pololu D36V6F3)
 - 4-pin Mini-DIN plug or suitable connection cable
 - Wires and suitable plug or solder connections
 - Optional enclosure, strain relief and insulation material
