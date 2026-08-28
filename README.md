@@ -15,17 +15,28 @@ MILLENNIUM Supreme T2 BT e-board
               ⇅ RS-232
         4-pin Mini-DIN
               ⇅
-MILLENNIUM The King chess computer module
+Generic chess computer module with DIN connector
 ```
+
+## Web installer
+
+Flash the gateway firmware directly from a supported browser (Chrome or
+Edge), no toolchain install required:
+
+**[https://parlue.github.io/BluetoothMax/](https://parlue.github.io/BluetoothMax/)**
+
+Connect an ESP32-C3 SuperMini (or compatible board) via USB and follow the
+on-page instructions. See [`docs/`](docs) for how the installer is built and
+served.
 
 ## Project status
 
-**Working.** The gateway holds a full, continuous game exchange between The
-King and the e-board: King reads and writes its EEPROM registers over the
-cable exactly as it would with the original wired peripheral, LED move
-suggestions are decoded and forwarded correctly, and moves (including
-castling) are tracked and confirmed correctly in both directions for the
-length of a real game.
+**Working.** The gateway holds a full, continuous game exchange between the
+chess computer module and the e-board: the module reads and writes its
+EEPROM registers over the cable exactly as it would with the original wired
+peripheral, LED move suggestions are decoded and forwarded correctly, and
+moves (including castling) are tracked and confirmed correctly in both
+directions for the length of a real game.
 
 Getting here took a long protocol- and hardware-level investigation. The
 short version: the Mode B/ChessLink protocol implementation (framing, odd
@@ -33,10 +44,10 @@ parity, checksums, status/LED encoding, register semantics) was correct
 early on and cross-validated against multiple independent open-source
 ChessLink implementations. The actual, final blocker turned out to be the
 **physical pin assignment of the hand-built 4-pin Mini-DIN cable** between
-the gateway and The King -- see [Electrical interfaces](#electrical-interfaces)
-below for the confirmed-correct pinout. No amount of protocol-level
-correctness could work around a cable that wasn't wired the way The King's
-receiver expected.
+the gateway and the chess computer module -- see
+[Electrical interfaces](#electrical-interfaces) below for the
+confirmed-correct pinout. No amount of protocol-level correctness could work
+around a cable that wasn't wired the way the module's receiver expected.
 
 The published firmware for users remains unchanged until a new version is
 explicitly approved for release.
@@ -59,13 +70,13 @@ face-on into the socket, keyway/notch at the bottom, guide pin at the top:
 
 | Clock position | Wire color | Function |
 |---:|---|---|
-| 1 o'clock | Yellow | +9 V supply (from The King) |
+| 1 o'clock | Yellow | +9 V supply (from the chess computer module) |
 | 5 o'clock | Black | RS-232 IN (into the level-shifter's input) |
 | 7 o'clock | Green | GND |
 | 11 o'clock | Red | RS-232 OUT (from the level-shifter's output) |
 
 This was established by direct comparison against a known-working peripheral
-bridge's cable and confirmed by measuring pin-by-pin against The King's own
+bridge's cable and confirmed by measuring pin-by-pin against the module's own
 socket. Earlier prototype cables used a plausible-looking but incorrect
 sequential pin numbering, and that mismatch was the actual root cause behind
 weeks of otherwise-correct-looking protocol traffic going nowhere -- if
@@ -91,8 +102,8 @@ ChessLink implementations handle the same spec text.
 ### Power
 
 ```text
-The King +9 V  ──> DC/DC IN+
-The King GND   ──> DC/DC IN-
+Module +9 V    ──> DC/DC IN+
+Module GND     ──> DC/DC IN-
 
 DC/DC OUT 5 V ──> ESP32-C3 5V/VBUS
 DC/DC GND      ──> ESP32-C3 GND
@@ -107,7 +118,7 @@ connected directly to an ESP32 GPIO or to the ESP32 3.3 V pin.
 ### Data lines
 
 ```text
-The King TX (RS-232 OUT, see pinout table)
+Module TX (RS-232 OUT, see pinout table)
     ──> HW-027 RS-232 input
     ──> HW-027 TTL output
     ──> ESP32-C3 GPIO20 (RX)
@@ -115,11 +126,11 @@ The King TX (RS-232 OUT, see pinout table)
 ESP32-C3 GPIO21 (TX)
     ──> HW-027 TTL input
     ──> HW-027 RS-232 output
-    ──> The King RX (RS-232 IN, see pinout table)
+    ──> Module RX (RS-232 IN, see pinout table)
 ```
 
-GPIO20 is used exclusively as the receive path from The King. GPIO21 is the
-transmit path to The King.
+GPIO20 is used exclusively as the receive path from the chess computer
+module. GPIO21 is the transmit path to the module.
 
 ## Important safety notes
 
@@ -145,14 +156,17 @@ PlatformIO environments in this repository:
 The main firmware operates as a bidirectional gateway between the chess
 computer's serial Mode B interface and the e-board's transparent BLE UART
 service: it scans for and connects to the e-board over BLE, and speaks Mode B
-over the cable to The King, translating and forwarding board status, LED move
-suggestions, and register reads/writes between the two sides.
+over the cable to the chess computer module, translating and forwarding
+board status, LED move suggestions, and register reads/writes between the
+two sides.
 
 `king-simulator` builds a firmware variant that simulates a fully compliant
 Mode B peripheral directly over the cable, with zero BLE and no e-board
-involved at all -- useful for isolating whether a given King unit's cable and
-serial reception is behaving correctly, independent of anything on the BLE
-side.
+involved at all -- useful for isolating whether a given chess computer
+module's cable and serial reception is behaving correctly, independent of
+anything on the BLE side.
+
+For a ready-to-flash build, see [Web installer](#web-installer) above.
 
 ## Trademark, copyright and protocol notice
 
