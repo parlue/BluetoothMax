@@ -52,35 +52,15 @@ served.
 
 ## Project status
 
-**Working**, against both a genuine ChessLink board and a Chessnut board.
-The gateway holds a full, continuous game exchange between the chess
-computer module and whichever e-board it's connected to: the module reads
-and writes its EEPROM registers over the cable exactly as it would with the
-original wired peripheral, LED move suggestions are decoded and forwarded
-correctly (including New Game/reset highlighting on boards that need it
-translated), and moves (including castling) are tracked and confirmed
-correctly in both directions for the length of a real game.
-
-Getting the cable side working took a long protocol- and hardware-level
-investigation. The short version: the Mode B/ChessLink protocol
-implementation (framing, odd parity, checksums, status/LED encoding, register
-semantics) was correct early on and cross-validated against multiple
-independent open-source ChessLink implementations. The actual, final blocker
-turned out to be the **physical pin assignment of the hand-built 4-pin
-Mini-DIN cable** between the gateway and the chess computer module -- see
-[Electrical interfaces](#electrical-interfaces) below for the
-confirmed-correct pinout. No amount of protocol-level correctness could work
-around a cable that wasn't wired the way the module's receiver expected.
-
-Adding Chessnut support meant translating between two genuinely different
-LED conventions: ChessLink boards represent LED state as a 9x9 grid of
-corner-shared points (so a highlighted square shares its corners with its
-neighbors), while Chessnut boards have one independent LED per square. The
-gateway decodes the corner grid into a plain list of highlighted squares,
-disambiguating geometric side effects (two highlighted squares that are two
-apart in the same file/rank can make the square between them look lit purely
-because it shares corners with both) using the board's own known piece
-positions.
+**Working**, against a genuine ChessLink board, a Chessnut board, and both a
+MILLENNIUM King and a Mephisto Phoenix chess computer module. The gateway
+holds a full, continuous game exchange between the chess computer module and
+whichever e-board it's connected to: the module reads and writes its EEPROM
+registers over the cable exactly as it would with the original wired
+peripheral, LED move suggestions are decoded and forwarded correctly
+(including New Game/reset highlighting on boards that need it translated),
+and moves (including castling) are tracked and confirmed correctly in both
+directions for the length of a real game.
 
 The published firmware for users remains unchanged until a new version is
 explicitly approved for release.
@@ -108,12 +88,7 @@ face-on into the socket, keyway/notch at the bottom, guide pin at the top:
 | 7 o'clock | Green | GND |
 | 11 o'clock | Red | RS-232 OUT (from the level-shifter's output) |
 
-This was established by direct comparison against a known-working peripheral
-bridge's cable and confirmed by measuring pin-by-pin against the module's own
-socket. Earlier prototype cables used a plausible-looking but incorrect
-sequential pin numbering, and that mismatch was the actual root cause behind
-weeks of otherwise-correct-looking protocol traffic going nowhere -- if
-you're building your own cable, trust this table over any datasheet-style
+If you're building your own cable, trust this table over any datasheet-style
 "pin 1/2/3/4" numbering, and verify against a multimeter/oscilloscope before
 trusting a new build.
 
@@ -202,6 +177,11 @@ kept as a known-good fallback build and never touched by ongoing multi-board
 work.
 
 For a ready-to-flash build, see [Web installer](#web-installer) above.
+
+## Contact
+
+- Board manufacturers who would like their board supported: dsommerfeld@mac.com
+- If you'd like a ready-built device but can't solder one yourself: dsommerfeld@mac.com
 
 ## Trademark, copyright and protocol notice
 
