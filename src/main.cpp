@@ -12,19 +12,6 @@ namespace {
 #define BOARD_ISOLATION_TEST_MODE 0
 #endif
 
-// King's own 'L' frame is normally NOT relayed to the BLE peer at all (see
-// receiveFromMillenniumComputer): against the real board, relaying it
-// re-lights the board's physical LEDs right after our own clearBoardLeds()
-// turns them off, which real testing showed blocks King from reacting to
-// anything further. But DiablilloSniffer (a fake board used to isolate our
-// own cable-facing code, no physical LEDs to re-light) needs to actually
-// see King's 'L' content to decode and confirm King's suggested move --
-// that's how the original sniffer breakthrough worked. Set to 1 only when
-// pointing this gateway's BLE scan at the sniffer instead of the real board.
-#ifndef RELAY_L_FRAME_TO_BOARD
-#define RELAY_L_FRAME_TO_BOARD 0
-#endif
-
 #define RAW_TRANSPARENT_GATEWAY 0
 
 constexpr int kMillenniumRxPin = 20;
@@ -530,18 +517,9 @@ void receiveFromMillenniumComputer() {
           requestBoardStatus();
           ledsAwaitingClear = true;
 
-          // Deliberately NOT relayed to the real board (see below): a live
-          // test showed the board's LEDs going on, briefly off (our own
-          // clearBoardLeds() X58, once a confirmed status arrives), then
-          // straight back on again -- because this L frame's own content
-          // (King's generic "everything lit" New-Game pattern, unchanged
-          // across every capture in this whole investigation) was queued
-          // and relayed to the board right after, re-lighting it. User's
-          // own experience: King only proceeds once the board's LEDs
-          // actually stay off. We already drive the board's LEDs
-          // independently via clearBoardLeds() whenever a confirmed status
-          // arrives, so relaying King's own (generic, non-move) guess back
-          // to the board only fights that and keeps the board lit forever.
+          // Diagnostic-only: log the LED grid content whenever it changes,
+          // so a real move suggestion (a localized pattern) is visually
+          // distinguishable from the generic New-Game baseline in the log.
           static uint8_t lastLedFrame[167] = {};
           static bool haveLastLedFrame = false;
           if (!haveLastLedFrame || memcmp(lastLedFrame, uartFrame, 167) != 0) {
@@ -551,23 +529,21 @@ void receiveFromMillenniumComputer() {
             for (size_t i = 3; i < 165; i += 2) {
               if (uartFrame[i] != '0' || uartFrame[i + 1] != '0') ++activeLedValues;
             }
-            Serial.printf("[L DIAG] slot=%c%c, active-values=%u, checksum=%c%c%s\r\n",
+            Serial.printf("[L DIAG] slot=%c%c, active-values=%u, checksum=%c%c\r\n",
                           uartFrame[1], uartFrame[2],
                           static_cast<unsigned>(activeLedValues),
-                          uartFrame[165], uartFrame[166],
-                          RELAY_L_FRAME_TO_BOARD ? "" : " (not relayed to board)");
+                          uartFrame[165], uartFrame[166]);
             Serial.print("[L RAW] ");
             Serial.write(uartFrame, expected);
             Serial.println();
           }
-#if RELAY_L_FRAME_TO_BOARD
-          queueUartFrameForBle(uartFrame, expected);
-#endif
-        } else {
-          // Preserve every other valid Mode-B command and its original
-          // order so the real board's LEDs and state still stay in sync.
-          queueUartFrameForBle(uartFrame, expected);
         }
+        // Preserve every valid Mode-B command and its original order so the
+        // BLE peer's LEDs and state stay in sync -- required both for a
+        // physical board's own LED display and for a robot-side gateway
+        // (e.g. CynusLink) that decodes King's suggested move from this
+        // content to drive its own hardware.
+        queueUartFrameForBle(uartFrame, expected);
       } else {
         ++discardedUartRxBytes;
         Serial.printf("[KING RX] bad checksum on %c frame (%u bytes), discarding first byte\r\n",
