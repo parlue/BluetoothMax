@@ -20,10 +20,23 @@ MILLENNIUM The King chess computer module
 
 ## Project status
 
-The project is currently in the prototype and protocol-testing stage. A
-bidirectional connection to the original e-board and the original The King
-module has been established. Full Mode B / ChessLink compatibility for normal
-games and analysis modes is currently being tested.
+**Working.** The gateway holds a full, continuous game exchange between The
+King and the e-board: King reads and writes its EEPROM registers over the
+cable exactly as it would with the original wired peripheral, LED move
+suggestions are decoded and forwarded correctly, and moves (including
+castling) are tracked and confirmed correctly in both directions for the
+length of a real game.
+
+Getting here took a long protocol- and hardware-level investigation. The
+short version: the Mode B/ChessLink protocol implementation (framing, odd
+parity, checksums, status/LED encoding, register semantics) was correct
+early on and cross-validated against multiple independent open-source
+ChessLink implementations. The actual, final blocker turned out to be the
+**physical pin assignment of the hand-built 4-pin Mini-DIN cable** between
+the gateway and The King -- see [Electrical interfaces](#electrical-interfaces)
+below for the confirmed-correct pinout. No amount of protocol-level
+correctness could work around a cable that wasn't wired the way The King's
+receiver expected.
 
 The published firmware for users remains unchanged until a new version is
 explicitly approved for release.
@@ -41,16 +54,24 @@ explicitly approved for release.
 
 ### ChessLink cable side
 
-| Mini-DIN pin | Function |
-|---:|---|
-| 1 | +9 V supply |
-| 2 | GND |
-| 3 | TxD |
-| 4 | RxD |
+Confirmed-correct pin assignment for the 4-pin Mini-DIN connector, viewed
+face-on into the socket, keyway/notch at the bottom, guide pin at the top:
 
-TxD and RxD labels must always be checked from the perspective of the device
-that transmits the signal. The signal directions in the wiring diagram below
-are authoritative.
+| Clock position | Wire color | Function |
+|---:|---|---|
+| 1 o'clock | Yellow | +9 V supply (from The King) |
+| 5 o'clock | Black | RS-232 IN (into the level-shifter's input) |
+| 7 o'clock | Green | GND |
+| 11 o'clock | Red | RS-232 OUT (from the level-shifter's output) |
+
+This was established by direct comparison against a known-working peripheral
+bridge's cable and confirmed by measuring pin-by-pin against The King's own
+socket. Earlier prototype cables used a plausible-looking but incorrect
+sequential pin numbering, and that mismatch was the actual root cause behind
+weeks of otherwise-correct-looking protocol traffic going nowhere -- if
+you're building your own cable, trust this table over any datasheet-style
+"pin 1/2/3/4" numbering, and verify against a multimeter/oscilloscope before
+trusting a new build.
 
 ### Serial settings
 
@@ -58,6 +79,12 @@ are authoritative.
 - 7 data bits
 - Odd parity
 - 1 stop bit (`7O1`)
+
+The firmware sends this as plain 8N1 with the odd-parity bit computed in
+software and packed into the 8th data bit -- this produces the identical
+10-bit wire waveform as native 7O1 framing while sidestepping inconsistent
+7O1 support in common USB-UART hardware. This matches how other independent
+ChessLink implementations handle the same spec text.
 
 ## Wiring diagram
 
@@ -80,7 +107,7 @@ connected directly to an ESP32 GPIO or to the ESP32 3.3 V pin.
 ### Data lines
 
 ```text
-The King TX
+The King TX (RS-232 OUT, see pinout table)
     ──> HW-027 RS-232 input
     ──> HW-027 TTL output
     ──> ESP32-C3 GPIO20 (RX)
@@ -88,7 +115,7 @@ The King TX
 ESP32-C3 GPIO21 (TX)
     ──> HW-027 TTL input
     ──> HW-027 RS-232 output
-    ──> The King RX
+    ──> The King RX (RS-232 IN, see pinout table)
 ```
 
 GPIO20 is used exclusively as the receive path from The King. GPIO21 is the
@@ -102,19 +129,30 @@ transmit path to The King.
 - Power the TTL side of the HW-027 with 3.3 V.
 - Never connect RS-232 levels directly to an ESP32 GPIO.
 - Check the viewing direction of Mini-DIN connectors: the solder side and plug
-  side are mirrored.
+  side are mirrored, and the pinout table above is specified face-on into the
+  socket -- double-check orientation before trusting a measurement.
 - Disconnect power before changing any wiring.
 
 ## Firmware
 
-PlatformIO environment for the current prototype:
+PlatformIO environments in this repository:
 
 ```ini
-[env:esp32-c3-supermini]
+[env:esp32-c3-supermini]                    ; normal gateway firmware
+[env:esp32-c3-supermini-king-simulator]     ; cable-only diagnostic, no BLE/board
 ```
 
-The firmware operates as a bidirectional gateway between the chess computer's
-serial Mode B interface and the e-board's transparent BLE UART service.
+The main firmware operates as a bidirectional gateway between the chess
+computer's serial Mode B interface and the e-board's transparent BLE UART
+service: it scans for and connects to the e-board over BLE, and speaks Mode B
+over the cable to The King, translating and forwarding board status, LED move
+suggestions, and register reads/writes between the two sides.
+
+`king-simulator` builds a firmware variant that simulates a fully compliant
+Mode B peripheral directly over the cable, with zero BLE and no e-board
+involved at all -- useful for isolating whether a given King unit's cable and
+serial reception is behaving correctly, independent of anything on the BLE
+side.
 
 ## Trademark, copyright and protocol notice
 
