@@ -17,7 +17,7 @@ Generic chess computer module with DIN connector
               ⇅ UART / 3.3 V
         ESP32-C3 SuperMini
               ⇅ Bluetooth LE
-   MILLENNIUM Supreme T2 BT  --  or --  Chessnut Air / GO / Pro
+MILLENNIUM Supreme T2 BT -- or -- Chessnut Air/GO/Pro -- or -- Cynus robot
 ```
 
 ## Supported e-boards
@@ -26,6 +26,7 @@ Generic chess computer module with DIN connector
 |---|---|
 | MILLENNIUM Supreme T2 BT (and other genuine ChessLink boards) | Working -- native Mode B relayed as-is |
 | Chessnut Air / GO / Pro | Working -- Chessnut's own BLE protocol translated to/from Mode B, including LED move suggestions and New Game/reset highlighting |
+| Cynus (camera-vision chess robot) | Working -- Cynus's own line-based BLE protocol translated to/from Mode B; decodes the chess computer's own LED move suggestions and commands Cynus's arm to execute them, including castling, en passant and pawn promotion reported as the individual piece lift/place steps a physical board would produce |
 
 Board detection is automatic: on every (re)connect attempt, the gateway scans
 for any known board's advertised BLE name and connects to whichever one it
@@ -52,18 +53,16 @@ served.
 
 ## Project status
 
-**Working**, against a genuine ChessLink board, a Chessnut board, and both a
-MILLENNIUM King and a Mephisto Phoenix chess computer module. The gateway
-holds a full, continuous game exchange between the chess computer module and
-whichever e-board it's connected to: the module reads and writes its EEPROM
-registers over the cable exactly as it would with the original wired
-peripheral, LED move suggestions are decoded and forwarded correctly
-(including New Game/reset highlighting on boards that need it translated),
-and moves (including castling) are tracked and confirmed correctly in both
-directions for the length of a real game.
-
-The published firmware for users remains unchanged until a new version is
-explicitly approved for release.
+**Working**, against a genuine ChessLink board, a Chessnut board, a Cynus
+robot, and both a MILLENNIUM King and a Mephisto Phoenix chess computer
+module. The gateway holds a full, continuous game exchange between the chess
+computer module and whichever board it's connected to: the module reads and
+writes its EEPROM registers over the cable exactly as it would with the
+original wired peripheral, LED move suggestions are decoded and forwarded
+correctly (including New Game/reset highlighting on boards that need it
+translated), and moves -- including castling, en passant and promotion -- are
+tracked and confirmed correctly in both directions for the length of a real
+game.
 
 ## Components
 
@@ -154,21 +153,28 @@ module. GPIO21 is the transmit path to the module.
 
 ## Firmware
 
-PlatformIO environment in this repository:
+Actively-developed PlatformIO environment in this repository:
 
 ```ini
 [env:esp32-c3-supermini]
 ```
 
 The firmware operates as a bidirectional gateway between the chess
-computer's serial Mode B interface and whichever e-board's own BLE protocol
-it connects to: on the cable side it always speaks Mode B (framing, odd
-parity, checksums, LED encoding, register reads/writes) exactly as a genuine
+computer's serial Mode B interface and whichever board's own BLE protocol it
+connects to: on the cable side it always speaks Mode B (framing, odd parity,
+checksums, LED encoding, register reads/writes) exactly as a genuine
 peripheral would; on the BLE side, a real ChessLink board is relayed as-is,
-while a Chessnut board's own binary protocol is translated to and from the
-same Mode B representation the cable side already understands -- the rest of
-the gateway (status caching, resend-on-change, LED-clear timing) is shared
-and doesn't need to know which board produced the data.
+while a Chessnut board's own binary protocol -- or Cynus's own line-based
+robot-control protocol -- is translated to and from the same Mode B
+representation the cable side already understands. The rest of the gateway
+(status caching, resend-on-change, LED-clear timing) is shared and doesn't
+need to know which board produced the data.
+
+Two additional environments (`esp32-c3-superminiv2`, `esp32-c3-superminiv3`)
+are frozen snapshots of earlier, independently-confirmed-working states of
+this same gateway (single-board ChessLink-only, and Millennium+Chessnut+
+Phoenix before Cynus support was added) -- kept as fallback builds, never
+touched by ongoing development.
 
 For a ready-to-flash build, see [Web installer](#web-installer) above.
 
@@ -181,10 +187,11 @@ get in touch: dsommerfeld@mac.com
 ## Trademark, copyright and protocol notice
 
 BluetoothMax is an independent, unofficial interoperability project. It is not
-affiliated with, endorsed by or sponsored by MILLENNIUM 2000 GmbH.
+affiliated with, endorsed by or sponsored by MILLENNIUM 2000 GmbH or any other
+vendor named in this document.
 
-MILLENNIUM, ChessLink, Chessnut and related product names, trademarks,
+MILLENNIUM, ChessLink, Chessnut, Cynus and related product names, trademarks,
 documentation and protocol specifications remain the property of their
-respective rights holders. This project does not claim ownership of the
-ChessLink or Chessnut protocols and does not distribute original firmware,
-software or other copyrighted material from either vendor.
+respective rights holders. This project does not claim ownership of any of
+these protocols and does not distribute original firmware, software or other
+copyrighted material from any vendor.

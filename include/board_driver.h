@@ -19,7 +19,7 @@
 constexpr size_t kFrameBufferSize = 256;
 constexpr size_t kModeBStatusFrameLength = 67;
 
-enum class BoardType : uint8_t { Unknown, Millennium, Chessnut };
+enum class BoardType : uint8_t { Unknown, Millennium, Chessnut, Cynus };
 
 // ---------------------------------------------------------------------------
 // Mode-B wire-format utilities (odd parity, block checksum, frame framing).

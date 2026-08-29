@@ -1,12 +1,23 @@
+// Frozen v3 snapshot of the multi-board gateway (main.cpp and friends),
+// taken right before Cynus (third board type) integration began. Confirmed
+// working end-to-end on real hardware: MILLENNIUM Supreme T2 BT, Chessnut
+// GO, and a Mephisto Phoenix (as the cable-side host, alongside King) --
+// connection, board status, moves incl. castling, LED move suggestions,
+// New Game reset, and cross-host checksum-convention detection all
+// confirmed. Built by the `esp32-c3-superminiv3` PlatformIO environment and
+// never touched by any later work -- flash this to fall back to this exact,
+// already-proven multi-board behavior. Self-contained: uses only the _v3
+// copies of board_driver/millennium_board/chessnut_board, never the live
+// (non-_v3) ones, so ongoing Cynus work can never affect this build.
+
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 
 #include <algorithm>
 
-#include "board_driver.h"
-#include "chessnut_board.h"
-#include "cynus_board.h"
-#include "millennium_board.h"
+#include "board_driver_v3.h"
+#include "chessnut_board_v3.h"
+#include "millennium_board_v3.h"
 
 namespace {
 
@@ -72,7 +83,6 @@ bool anyBoardConnected() {
   switch (activeBoardType) {
     case BoardType::Millennium: return millenniumIsConnected();
     case BoardType::Chessnut: return chessnutIsConnected();
-    case BoardType::Cynus: return cynusIsConnected();
     default: return false;
   }
 }
@@ -81,7 +91,6 @@ void clearActiveBoardLeds() {
   switch (activeBoardType) {
     case BoardType::Millennium: millenniumClearLeds(); break;
     case BoardType::Chessnut: chessnutSetHighlightedSquares(nullptr, 0); break;
-    case BoardType::Cynus: cynusClearLeds(); break;
     default: break;
   }
 }
@@ -95,12 +104,8 @@ const KnownBoard kKnownBoards[] = {
     {kMillenniumBoardName, BoardType::Millennium},
     {kChessnutBoardName, BoardType::Chessnut},
     {kChessnutBoardNameAlt, BoardType::Chessnut},
-    {kCynusBoardName, BoardType::Cynus},
 };
 
-// Case-insensitive substring search -- BLE devices vary the exact advertised
-// name (model suffix, MAC-derived suffix, etc.) so an exact/case-sensitive
-// match is too brittle to rely on.
 bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
   std::string lowerHaystack = haystack;
   std::transform(lowerHaystack.begin(), lowerHaystack.end(), lowerHaystack.begin(), ::tolower);
@@ -143,7 +148,6 @@ bool connectToBoard() {
 
   const bool connected = (type == BoardType::Millennium) ? millenniumConnect(address)
                           : (type == BoardType::Chessnut) ? chessnutConnect(address)
-                          : (type == BoardType::Cynus)    ? cynusConnect(address)
                                                            : false;
   if (!connected) return false;
 
@@ -157,12 +161,6 @@ bool connectToBoard() {
   return true;
 }
 
-// The underlying BLE library's connect() call has no internal timeout and
-// can block forever if a peer accepts the link at the radio level but never
-// completes the GATT-open handshake (observed with some non-Millennium
-// boards). Running each attempt on its own task keeps a stuck connect from
-// freezing King's cable-facing loop() -- the one board interface that must
-// never be affected by anything on the BLE side.
 void connectTask(void*) {
   connectToBoard();
   connectInProgress = false;
@@ -179,10 +177,6 @@ void receiveFromMillenniumComputer() {
       const size_t expected = modeBCommandLength(uartFrame[0]);
       if (expected == 0) {
         ++discardedUartRxBytes;
-        // Resyncing after a bad frame (e.g. a rejected checksum) can discard
-        // dozens of bytes one at a time -- log only the first byte of each
-        // run plus a one-line summary once resynced, instead of one line per
-        // byte, which used to flood the log to the point of being unusable.
         static uint32_t resyncRunLength = 0;
         static uint8_t resyncFirstByte = 0;
         if (resyncRunLength == 0) {
@@ -212,34 +206,20 @@ void receiveFromMillenniumComputer() {
                           "matching it in our own replies from now on.");
         }
         if (uartFrame[0] == 'L' && expected == 167) {
-          // The checksum of a bare 'l' ack is content-independent, so we can
-          // answer instantly instead of waiting on a BLE round trip.
           uint8_t localLedAck[3] = {'l', 0, 0};
           computeModeBChecksumHex(localLedAck + 1, localLedAck, 1, cableHostUsesEncodedChecksum);
           writeFrameToKing(localLedAck, sizeof(localLedAck));
 
-          // King may only accept a reply within a single probe cycle, which
-          // a fresh BLE round trip can miss -- send the cached status
-          // immediately alongside the ack, then also kick off a fresh fetch.
           if (haveCachedBoardStatus) {
             writeFrameToKing(cachedBoardStatus, sizeof(cachedBoardStatus));
           }
           ledsAwaitingClear = true;
 
-          // Mephisto Phoenix legitimately cycles through many distinct
-          // frames while suggesting one move (blink-off, plus each square
-          // of a multi-square animation in turn) -- comparing against even
-          // a handful of recently-seen frames still logged most of them as
-          // "new", flooding the log enough to cut off the more useful lines
-          // (fen/status/move messages) in a pasted capture. A hard time
-          // throttle is simpler and actually bounds the log rate: at most
-          // one [L DIAG]/[L RAW] pair per second, always showing whatever
-          // the current frame is at that tick. This is diagnostic-only
-          // output (no decoding logic reads it) so throttling it changes
-          // nothing about move detection.
-          static uint32_t lastLedDiagLogAt = 0;
-          if (static_cast<uint32_t>(millis() - lastLedDiagLogAt) >= 1000) {
-            lastLedDiagLogAt = millis();
+          static uint8_t lastLedFrame[167] = {};
+          static bool haveLastLedFrame = false;
+          if (!haveLastLedFrame || memcmp(lastLedFrame, uartFrame, 167) != 0) {
+            memcpy(lastLedFrame, uartFrame, 167);
+            haveLastLedFrame = true;
             size_t activeLedValues = 0;
             for (size_t i = 3; i < 165; i += 2) {
               if (uartFrame[i] != '0' || uartFrame[i + 1] != '0') ++activeLedValues;
@@ -258,26 +238,9 @@ void receiveFromMillenniumComputer() {
             millenniumRequestBoardStatus();
             millenniumRelayLedFrame(uartFrame, expected);
           } else if (activeBoardType == BoardType::Chessnut) {
-            // Sized for a full New Game/reset frame (every square that
-            // differs from the starting position at once), not just a
-            // single move's source/destination pair.
             SquareHighlight squares[32];
             size_t count = decodeKingLedFrame(uartFrame, squares, 32);
 
-            // Two generic (reset/error) squares sharing the same corner
-            // value can make a square sandwiched between them appear lit
-            // too, purely because it shares corners with both -- the raw
-            // corner data alone can't tell a real generic highlight apart
-            // from this geometric side effect. Only a New Game/reset frame
-            // (many squares highlighted at once) can actually produce this;
-            // a single generic-marked square is a normal, real move
-            // suggestion (e.g. Mephisto Phoenix marks moves generically
-            // rather than with King's distinct source/destination bits) and
-            // must never be filtered -- comparing it against the standard
-            // starting position wrongly ate every such suggestion for any
-            // piece that hadn't moved yet. A real ghost needs at least 2
-            // real neighbors plus itself, so only try elimination once at
-            // least 3 squares were decoded at once.
             size_t kept = 0;
             for (size_t i = 0; i < count; ++i) {
               bool eliminate = false;
@@ -292,30 +255,13 @@ void receiveFromMillenniumComputer() {
             }
             count = kept;
 
-            // Always update, even on count==0 (ambiguous/undecodable frame,
-            // e.g. two adjacent suggested squares sharing corners): leaving
-            // the PREVIOUS highlight lit instead of clearing it stuck the
-            // physical board's LEDs on a stale suggestion, which then hid
-            // the actual next move from the user.
             chessnutSetHighlightedSquares(squares, count);
-          } else if (activeBoardType == BoardType::Cynus) {
-            // Cynus's own driver decodes the raw frame itself (engineSide-
-            // aware, with a stability wait) rather than the shared
-            // Millennium/Chessnut SquareHighlight decoder -- see
-            // cynus_board.cpp for why.
-            cynusHandleLedFrame(uartFrame);
           }
         } else if (activeBoardType == BoardType::Millennium) {
-          // King never sends non-'L' commands in practice, but relay
-          // anything else unchanged too, exactly as always.
           millenniumRelayCommand(uartFrame, expected);
         }
       } else {
         ++discardedUartRxBytes;
-        // Dump the full raw frame as one line (mirrors [L RAW] for a valid
-        // L frame) plus the computed-vs-received checksum, since the
-        // byte-by-byte resync log below is too fragmented to diagnose a
-        // consistently-wrong checksum from a new/unproven host device.
         uint8_t computedChecksum = 0;
         for (size_t i = 0; i + 2 < expected; ++i) computedChecksum ^= uartFrame[i] & 0x7f;
         Serial.print("[BAD CHECKSUM RAW] ");
@@ -346,9 +292,6 @@ uint32_t autonomousStatusIntervalMs = kFallbackAutoReportIntervalMs;
 bool cableHostUsesEncodedChecksum = false;
 
 size_t writeFrameToKing(const uint8_t* logicalFrame, size_t length) {
-  // Pre-encode odd parity into bit 7 and send as plain 8N1: this produces
-  // the same 10-bit wire waveform as native 7O1 framing, which the ESP32-C3
-  // UART hardware cannot generate directly.
   uint8_t encoded[kFrameBufferSize] = {};
   for (size_t i = 0; i < length; ++i) encoded[i] = encodeOddParity(logicalFrame[i]);
   return MillenniumSerial.write(encoded, length);
@@ -380,8 +323,6 @@ void onBoardStatusFrame(const uint8_t frame[kModeBStatusFrameLength]) {
 }
 
 void setup() {
-  // King sends its Mode-B identification immediately after power-up; start
-  // its UART before USB logging and any BLE scan so those bytes aren't lost.
   MillenniumSerial.setRxBufferSize(4096);
   MillenniumSerial.begin(MILLENNIUM_BAUD, SERIAL_8N1, kMillenniumRxPin, kMillenniumTxPin);
 
@@ -392,7 +333,7 @@ void setup() {
   digitalWrite(kStatusLedPin, HIGH);
   xTaskCreate(statusLedTask, "status-led", 1536, nullptr, 1, nullptr);
 
-  Serial.println("\r\nBluetoothMax multi-board gateway");
+  Serial.println("\r\nBluetoothMax multi-board gateway (v3 frozen snapshot)");
   Serial.printf("Cable: %lu baud, explicit odd parity over 8N1, RX=GPIO%d, TX=GPIO%d\r\n",
                 static_cast<unsigned long>(MILLENNIUM_BAUD), kMillenniumRxPin, kMillenniumTxPin);
   Serial.println("WARNING: cable GPIOs only through the 3.3 V MAX3232 TTL side.");
@@ -408,14 +349,9 @@ void loop() {
     switch (activeBoardType) {
       case BoardType::Millennium: millenniumPoll(); break;
       case BoardType::Chessnut: chessnutPoll(); break;
-      case BoardType::Cynus: cynusPoll(); break;
       default: break;
     }
 
-    // Status changes are already forwarded to King immediately on arrival;
-    // this periodic tick only resends if the cache differs from what was
-    // last actually put on the wire, to avoid flooding the cable with
-    // identical frames at the board's own scan rate.
     if (haveCachedBoardStatus &&
         static_cast<uint32_t>(millis() - lastAutonomousStatusMs) >= autonomousStatusIntervalMs) {
       lastAutonomousStatusMs = millis();
@@ -442,7 +378,6 @@ void loop() {
                   anyBoardConnected() ? "connected" : "offline",
                   activeBoardType == BoardType::Millennium ? "millennium"
                   : activeBoardType == BoardType::Chessnut  ? "chessnut"
-                  : activeBoardType == BoardType::Cynus     ? "cynus"
                                                              : "none",
                   static_cast<unsigned long>(rawUartRxBytes),
                   static_cast<unsigned long>(discardedUartRxBytes));
