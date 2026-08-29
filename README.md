@@ -26,7 +26,7 @@ MILLENNIUM Supreme T2 BT -- or -- Chessnut Air/GO/Pro -- or -- Cynus robot
 |---|---|
 | MILLENNIUM Supreme T2 BT (and other genuine ChessLink boards) | Working -- native Mode B relayed as-is |
 | Chessnut Air / GO / Pro | Working -- Chessnut's own BLE protocol translated to/from Mode B, including LED move suggestions and New Game/reset highlighting |
-| Cynus (camera-vision chess robot) | Working -- Cynus's own line-based BLE protocol translated to/from Mode B; decodes the chess computer's own LED move suggestions and commands Cynus's arm to execute them, including castling, en passant and pawn promotion reported as the individual piece lift/place steps a physical board would produce |
+| Cynus (camera-vision chess robot) | Working -- Cynus's own line-based BLE protocol translated to/from Mode B; decodes the chess computer's own LED move suggestions and commands Cynus's arm to execute them, including castling, en passant and pawn promotion |
 
 Board detection is automatic: on every (re)connect attempt, the gateway scans
 for any known board's advertised BLE name and connects to whichever one it
