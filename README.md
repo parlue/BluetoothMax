@@ -64,6 +64,20 @@ translated), and moves -- including castling, en passant and promotion -- are
 tracked and confirmed correctly in both directions for the length of a real
 game.
 
+## Version history
+
+| Version | Adds |
+|---|---|
+| v1.0 | MILLENNIUM ChessLink board support (single-board) |
+| v2.0 | + Chessnut Air/GO/Pro support (multi-board) |
+| v3.0 | + Mephisto Phoenix chess computer support (cable-side checksum auto-detect) |
+| v4.0 (current) | + ManyaCynus robot support (castling, en passant, promotion) |
+
+v1.0 and v3.0 are also kept as frozen fallback PlatformIO environments in
+this repository (`esp32-c3-superminiv2` and `esp32-c3-superminiv3`
+respectively) -- see [Firmware](#firmware) below. v2.0 was superseded by
+v3.0 before it was ever frozen as its own environment.
+
 ## Components
 
 - ESP32-C3 SuperMini
@@ -170,11 +184,15 @@ representation the cable side already understands. The rest of the gateway
 (status caching, resend-on-change, LED-clear timing) is shared and doesn't
 need to know which board produced the data.
 
-Two additional environments (`esp32-c3-superminiv2`, `esp32-c3-superminiv3`)
-are frozen snapshots of earlier, independently-confirmed-working states of
-this same gateway (single-board ChessLink-only, and Millennium+Chessnut+
-Phoenix before ManyaCynus support was added) -- kept as fallback builds, never
-touched by ongoing development.
+Two additional environments are frozen snapshots of earlier,
+independently-confirmed-working versions of this same gateway (see
+[Version history](#version-history) above) -- kept as fallback builds, never
+touched by ongoing development:
+
+| Environment | Version frozen |
+|---|---|
+| `esp32-c3-superminiv2` | v1.0 (single-board, ChessLink-only) |
+| `esp32-c3-superminiv3` | v3.0 (Millennium + Chessnut + Phoenix, before ManyaCynus) |
 
 For a ready-to-flash build, see [Web installer](#web-installer) above.
 
