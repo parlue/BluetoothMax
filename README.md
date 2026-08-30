@@ -8,6 +8,11 @@ it scans for and connects to **whichever supported e-board is present** at
 runtime, translating each board's own native protocol to and from Mode B on
 the fly. One firmware image, multiple board brands.
 
+No cable chess computer at hand? The gateway can also run
+[standalone](#standalone-mode-no-cable-computer-required), masquerading as a
+ChessLink or Chessnut board over BLE so wireless chess software can connect
+to it directly.
+
 ```text
 Generic chess computer module with DIN connector
               ⇅
@@ -68,6 +73,45 @@ the same robot that this gateway's ManyaCynus support is ported from.
   confirmed, and the specific offending square(s) (e.g. "+E4") when a scan
   doesn't settle into a legal position.
 
+## Standalone mode (no cable computer required)
+
+If no chess computer module is detected on the cable within 5 seconds of
+power-up, the gateway switches permanently (until the next power cycle) into
+a standalone mode: it keeps its normal BLE connection to the e-board, and
+**additionally** starts advertising itself as a BLE peripheral -- masquerading
+as either a genuine ChessLink board or a genuine Chessnut board -- so wireless
+chess software can connect directly to the gateway with no chess computer
+module in the loop at all.
+
+**Setup sequence** (all signalled on the connected e-board itself -- LED
+squares light up on Millennium/Chessnut boards, ManyaCynus shows text):
+
+1. The gateway connects to the e-board as usual and confirms its starting
+   position.
+2. **Ready signal**: the four center squares (d4/d5/e4/e5) light up (ManyaCynus:
+   "OK") for 2 seconds, then clear.
+3. Place a **second white queen** on the board (every one of these e-boards'
+   piece sets includes a spare queen for promotion anyway):
+   - **a4** selects ChessLink masquerade -- the gateway advertises as
+     "MILLENNIUM CHESS", the same name and protocol a real Millennium
+     Supreme board uses.
+   - **b4** selects Chessnut masquerade -- the gateway advertises as
+     "Chessnut GO", speaking Chessnut's own native BLE protocol.
+4. **Confirmed signal**: the four corner squares light up (ManyaCynus:
+   "CSLMode" / "NutMode") for 2 seconds, then clear, and the selected
+   masquerade starts advertising.
+5. Connect to the gateway from your chess software like you would to a real
+   board of that type.
+
+| Masquerade | Confirmed working with | Known issue |
+|---|---|---|
+| ChessLink ("MILLENNIUM CHESS") | PicoChess, and at least one other independent ChessLink client | -- |
+| Chessnut ("Chessnut GO") | [Chess PGN Master](https://pgnmaster.kalab.com/) | Does not currently work with [BearChess](https://www.solanosoft.com/index.php?page=bearchess): the BLE link itself connects and negotiates correctly (MTU and PHY both succeed), but BearChess's own client never proceeds to GATT discovery/use. Root cause not yet identified; being investigated with BearChess's developer. |
+
+This mode is independent of, and doesn't change, normal cable operation --
+if a chess computer module is present on the cable at power-up, standalone
+mode never activates.
+
 ## Supported chess computer modules (cable side)
 
 Tested working: MILLENNIUM King and Mephisto Phoenix. Both speak Mode B over
@@ -98,7 +142,10 @@ original wired peripheral, LED move suggestions are decoded and forwarded
 correctly (including New Game/reset highlighting on boards that need it
 translated), and moves -- including castling, en passant and promotion -- are
 tracked and confirmed correctly in both directions for the length of a real
-game.
+game. [Standalone mode](#standalone-mode-no-cable-computer-required)'s
+ChessLink masquerade is confirmed the same way against real ChessLink
+client software; its Chessnut masquerade against Chess PGN Master -- see
+that section for the one known client incompatibility.
 
 ## Version history
 
@@ -107,7 +154,8 @@ game.
 | v1.0 | MILLENNIUM ChessLink board support (single-board) |
 | v2.0 | + Chessnut Air/GO/Pro support (multi-board) |
 | v3.0 | + Mephisto Phoenix chess computer support (cable-side checksum auto-detect) |
-| v4.0 (current) | + ManyaCynus robot support (castling, en passant, promotion) |
+| v4.0 | + ManyaCynus robot support (castling, en passant, promotion) |
+| v5.0 (current) | + [Standalone mode](#standalone-mode-no-cable-computer-required): BLE-to-BLE ChessLink/Chessnut masquerade, no cable chess computer required |
 
 v1.0 and v3.0 are also kept as frozen fallback PlatformIO environments in
 this repository (`esp32-c3-superminiv2` and `esp32-c3-superminiv3`
@@ -219,6 +267,11 @@ robot-control protocol -- is translated to and from the same Mode B
 representation the cable side already understands. The rest of the gateway
 (status caching, resend-on-change, LED-clear timing) is shared and doesn't
 need to know which board produced the data.
+
+[Standalone mode](#standalone-mode-no-cable-computer-required)'s two BLE
+masquerade roles are self-contained modules (`chesslink_server.*`,
+`chessnut_server.*`) that answer every host command themselves using the
+same status cache, rather than relaying a real Mode B/Chessnut peer.
 
 Two additional environments are frozen snapshots of earlier,
 independently-confirmed-working versions of this same gateway (see

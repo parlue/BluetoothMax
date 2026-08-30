@@ -31,3 +31,8 @@ void cynusHandleLedFrame(const uint8_t frame167[167]);
 // Cynus has no LEDs of its own to clear; present only so main.cpp's
 // clearActiveBoardLeds() dispatch stays uniform across board types.
 void cynusClearLeds();
+
+// Shows short (<=7 char) feedback text on Cynus's own display -- exposed so
+// main.cpp can show BT-BT mode-selection signals ("OK", "CSLMode", ...) on
+// boards that have no LEDs of their own.
+void cynusShowText(const char* text);

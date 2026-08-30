@@ -1,5 +1,9 @@
 #include "board_driver.h"
 
+#include "chessnut_board.h"
+#include "cynus_board.h"
+#include "millennium_board.h"
+
 namespace {
 
 // King's own file/rank convention on the wire is reversed (h..a, not a..h)
@@ -8,6 +12,11 @@ namespace {
 // corner indices (a 9x9 grid over the 8x8 board), not board squares
 // directly; see the loop in decodeKingLedFrame().
 uint8_t ledGrid[81] = {};
+
+// Standard starting position in Mode-B wire order (h..a per rank), used only
+// to filter Chessnut LED highlights in dispatchLedFrameToBoard() below.
+constexpr char kStartPositionWire[] =
+    "RNBKQBNRPPPPPPPP................................pppppppprnbkqbnr";
 
 }  // namespace
 
@@ -85,4 +94,93 @@ size_t decodeKingLedFrame(const uint8_t frame167[167], SquareHighlight* out, siz
     }
   }
   return count < maxOut ? count : maxOut;
+}
+
+void encodeLedFrame(const uint8_t* squareIndices, size_t count, uint8_t frame167[167],
+                     bool useEncodedChecksum) {
+  uint8_t grid[81] = {};
+  for (size_t i = 0; i < count; ++i) {
+    const int squareIndex = squareIndices[i];
+    const int file0 = squareIndex % 8;
+    const int rank = squareIndex / 8 + 1;
+    // Inverse of the changedFile/changedRank mapping in decodeKingLedFrame()
+    // above.
+    const int file = 7 - file0;
+    const int rankTop = rank - 1;
+    grid[file * 9 + rankTop] = 0xFF;
+    grid[(file + 1) * 9 + rankTop] = 0xFF;
+    grid[file * 9 + rankTop + 1] = 0xFF;
+    grid[(file + 1) * 9 + rankTop + 1] = 0xFF;
+  }
+
+  static constexpr char hex[] = "0123456789ABCDEF";
+  frame167[0] = 'L';
+  frame167[1] = '0';
+  frame167[2] = '1';
+  for (int i = 0; i < 81; ++i) {
+    frame167[3 + i * 2] = static_cast<uint8_t>(hex[grid[i] >> 4]);
+    frame167[4 + i * 2] = static_cast<uint8_t>(hex[grid[i] & 0x0F]);
+  }
+  computeModeBChecksumHex(frame167 + 165, frame167, 165, useEncodedChecksum);
+}
+
+void dispatchLedFrameToBoard(BoardType type, const uint8_t frame167[167]) {
+  if (type == BoardType::Millennium) {
+    millenniumSuppressNextLedAck();
+    millenniumRequestBoardStatus();
+    millenniumRelayLedFrame(frame167, 167);
+  } else if (type == BoardType::Chessnut) {
+    // Sized for a full New Game/reset frame (every square that differs from
+    // the starting position at once), not just a single move's
+    // source/destination pair.
+    SquareHighlight squares[32];
+    size_t count = decodeKingLedFrame(frame167, squares, 32);
+
+    // Two generic (reset/error) squares sharing the same corner value can
+    // make a square sandwiched between them appear lit too, purely because
+    // it shares corners with both -- the raw corner data alone can't tell a
+    // real generic highlight apart from this geometric side effect. Only a
+    // New Game/reset frame (many squares highlighted at once) can actually
+    // produce this; a single generic-marked square is a normal, real move
+    // suggestion (e.g. Mephisto Phoenix marks moves generically rather than
+    // with King's distinct source/destination bits) and must never be
+    // filtered -- comparing it against the standard starting position
+    // wrongly ate every such suggestion for any piece that hadn't moved
+    // yet. A real ghost needs at least 2 real neighbors plus itself, so
+    // only try elimination once at least 3 squares were decoded at once.
+    const uint8_t* cached = cachedBoardStatusBytes();
+    size_t kept = 0;
+    for (size_t i = 0; i < count; ++i) {
+      bool eliminate = false;
+      if (count >= 3 && squares[i].role == SquareHighlightRole::Generic && cached != nullptr) {
+        const int file0 = squares[i].squareIndex % 8;
+        const int rank = squares[i].squareIndex / 8 + 1;
+        const int wireIndex = modeBStatusWireIndex(file0, rank);
+        eliminate = cached[1 + wireIndex] == kStartPositionWire[wireIndex];
+      }
+      if (!eliminate) squares[kept++] = squares[i];
+    }
+    count = kept;
+
+    // Always update, even on count==0 (ambiguous/undecodable frame, e.g.
+    // two adjacent suggested squares sharing corners): leaving the PREVIOUS
+    // highlight lit instead of clearing it stuck the physical board's LEDs
+    // on a stale suggestion, which then hid the actual next move from the
+    // user.
+    chessnutSetHighlightedSquares(squares, count);
+  } else if (type == BoardType::Cynus) {
+    // Cynus's own driver decodes the raw frame itself (engineSide-aware,
+    // with a stability wait) rather than the shared decoder above -- see
+    // cynus_board.cpp for why.
+    cynusHandleLedFrame(frame167);
+  }
+}
+
+void clearBoardLeds(BoardType type) {
+  switch (type) {
+    case BoardType::Millennium: millenniumClearLeds(); break;
+    case BoardType::Chessnut: chessnutSetHighlightedSquares(nullptr, 0); break;
+    case BoardType::Cynus: cynusClearLeds(); break;
+    default: break;
+  }
 }

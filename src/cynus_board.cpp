@@ -118,6 +118,12 @@ std::string lastSentMoveUci;
 // cynusPoll().
 uint32_t nextStartupRescanAt = 0;
 
+// The last startup-error diff text actually shown on Cynus's display (e.g.
+// "+E4"), so an unchanged error pattern across repeated rescans isn't
+// re-displayed/re-sounded every 5 seconds -- ported from CynusLink's own
+// lastStartupErrorDisplay dedup.
+std::string lastStartupErrorDisplay;
+
 // 0 = not pending; set right after connect, consumed by cynusPoll() to send
 // the first "scan board" once kInitialScanDelayMs has passed.
 uint32_t initialScanAt = 0;
@@ -275,6 +281,36 @@ std::string startupSquare(int board64Index) {
   return s;
 }
 
+int mismatchCount(const char actual[65], const char expected[65]) {
+  int n = 0;
+  for (int i = 0; i < 64; ++i) {
+    if (actual[i] != expected[i]) ++n;
+  }
+  return n;
+}
+
+// Ported from CynusLink's startupErrorDisplay(): compares the scanned board
+// against whichever of the normal/flipped starting positions is the closer
+// match, and names up to 2 of the offending squares (Cynus's own display is
+// only 7 characters wide) -- e.g. "+E4" (unexpected/wrong piece there) or
+// "-F8" (expected piece missing). Returns "" if there's no single closest
+// match or the board is already correct (handleStartupBoard() only calls
+// this once it's confirmed neither orientation matches exactly).
+std::string startupErrorDisplay(const char scanned[65]) {
+  char normal[65], flipped[65];
+  if (!fenPlacementToBoard(kStartFen, normal) || !fenPlacementToBoard(kFlippedStartFen, flipped)) return "";
+  const char* expected = mismatchCount(scanned, flipped) < mismatchCount(scanned, normal) ? flipped : normal;
+  std::string issues[2];
+  int count = 0;
+  for (int i = 0; i < 64 && count < 2; ++i) {
+    if (scanned[i] == expected[i]) continue;
+    issues[count++] = (scanned[i] == '.' ? "-" : "+") + startupSquare(i);
+  }
+  if (count == 0) return "";
+  if (count == 1) return issues[0];
+  return issues[0] + "/" + issues[1];
+}
+
 std::string inferMove(const char oldBoard[65], const char newBoard[65], std::string* scanError = nullptr) {
   int foundSource = -1, foundDestination = -1, matches = 0;
   int bestMismatch = 65, bestMismatchCount = 0;
@@ -350,7 +386,18 @@ std::string inferMove(const char oldBoard[65], const char newBoard[65], std::str
     }
     return "";
   }
-  return squareName(foundSource % 8, foundSource / 8) + squareName(foundDestination % 8, foundDestination / 8);
+  std::string uci = squareName(foundSource % 8, foundSource / 8) + squareName(foundDestination % 8, foundDestination / 8);
+  // Promotion: append the actually-scanned piece at the destination as a
+  // 5th UCI character (e.g. "e7e8q") when a pawn reached the last rank --
+  // moveDisplayText() turns this into CynusLink's own "Chg Q"/"Chg R"/etc.
+  // display text. The camera already tells us which piece was placed
+  // (newBoard[foundDestination]); no separate promotion-choice logic needed.
+  const bool isPawn = tolower(static_cast<unsigned char>(oldBoard[foundSource])) == 'p';
+  const int destRankTop = foundDestination / 8;
+  if (isPawn && (destRankTop == 0 || destRankTop == 7)) {
+    uci += static_cast<char>(tolower(static_cast<unsigned char>(newBoard[foundDestination])));
+  }
+  return uci;
 }
 
 bool hasBothKings(const char board[65]) {
@@ -558,10 +605,18 @@ void handleStartupBoard(const char scanned[65]) {
   } else {
     Serial.println("[CYNUS] startup position not yet a valid start position; "
                     "automatic rescan in 5 seconds");
+    const std::string errorText = startupErrorDisplay(scanned);
+    if (!errorText.empty() && errorText != lastStartupErrorDisplay) {
+      lastStartupErrorDisplay = errorText;
+      cynusDisplay(errorText);
+      sendCynus("play audio error\n");
+      Serial.printf("[CYNUS] startup position error display: %s (error audio)\r\n", errorText.c_str());
+    }
     nextStartupRescanAt = millis() + kStartupCorrectionRescanMs;
     return;
   }
   nextStartupRescanAt = 0;
+  lastStartupErrorDisplay.clear();
   memcpy(board64, scanned, sizeof(board64));
   syncState = SyncState::Ready;
   engineSide = EngineSide::Unknown;
@@ -1257,6 +1312,7 @@ void resetConnectionState() {
   alternatingPairStableSince = 0;
   castlingTransitionActive = false;
   enPassantTransitionActive = false;
+  lastStartupErrorDisplay.clear();
 }
 
 class ClientCallbacks final : public NimBLEClientCallbacks {
@@ -1382,6 +1438,10 @@ void cynusHandleLedFrame(const uint8_t frame167[167]) {
 
 void cynusClearLeds() {
   // No physical LEDs on Cynus itself to clear.
+}
+
+void cynusShowText(const char* text) {
+  cynusDisplay(text);
 }
 
 void cynusPoll() {

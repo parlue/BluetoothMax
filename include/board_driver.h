@@ -178,6 +178,19 @@ size_t decodeKingLedFrame(const uint8_t frame167[167], SquareHighlight* out, siz
 // establishes the no-highlight reference point).
 void resetKingLedFrameBaseline();
 
+// Inverse of decodeKingLedFrame(): builds a valid Mode-B 167-byte 'L' frame
+// (slot '01' + 81 LED corner bytes + 2-hex checksum, ready to send as-is)
+// that marks each of the given squares generically (all 4 corners 0xFF --
+// the same convention Mephisto Phoenix uses, and one decodeKingLedFrame()
+// already understands as SquareHighlightRole::Generic). Used to synthesize
+// our own LED signals (e.g. the BT-BT mode "ready"/"confirmed" blink
+// patterns) rather than relaying a signal that came from a real host.
+// squareIndices use boardSquareIndex()'s convention (a1=0, rank-ascending).
+// useEncodedChecksum should match cableHostUsesEncodedChecksum for a cable
+// recipient, or be false for a BLE recipient (no cable quirk applies there).
+void encodeLedFrame(const uint8_t* squareIndices, size_t count, uint8_t frame167[167],
+                     bool useEncodedChecksum);
+
 // ---------------------------------------------------------------------------
 // Shared callback: every board driver calls this whenever it has a fresh,
 // valid Mode-B 's' status frame (kModeBStatusFrameLength bytes, checksum
@@ -197,6 +210,34 @@ size_t writeFrameToKing(const uint8_t* logicalFrame, size_t length);
 // main.cpp; drivers use this to know whether they still need to actively
 // request an initial status.
 bool haveAnyBoardStatus();
+
+// The most recently cached kModeBStatusFrameLength-byte status frame, or
+// nullptr if haveAnyBoardStatus() is still false. Implemented in main.cpp;
+// used by dispatchLedFrameToBoard()'s Chessnut ghost-square filter, which
+// needs to know the board's current occupancy.
+const uint8_t* cachedBoardStatusBytes();
+
+// Decodes a raw, already parity-stripped and checksum-validated 167-byte
+// 'L' frame and relays/dispatches it to whichever board type is currently
+// connected, using each driver's own proven LED-suggestion handling
+// (Millennium: relay the raw frame as-is; Chessnut: decode + ghost-square
+// filter + highlight; Cynus: its own engineSide-aware decoder). Shared
+// between the cable-facing pipeline (main.cpp, fed by King/Phoenix) and the
+// BT-BT ChessLink masquerade server (chesslink_server.cpp, fed by external
+// ChessLink software) so both hosts get identical behavior. Implemented in
+// board_driver.cpp.
+void dispatchLedFrameToBoard(BoardType type, const uint8_t frame167[167]);
+
+// Physically clears whichever board type is connected (Millennium: sends
+// 'X58' to the real board; Chessnut: clears its highlight; Cynus: no-op, no
+// LEDs of its own). Shared between main.cpp's own use (King's 'X'/initial-
+// status handling) and the BT-BT ChessLink masquerade server's 'X' handler.
+void clearBoardLeds(BoardType type);
+
+// The board type the gateway is currently connected to over BLE
+// (Unknown if not connected to anything yet). Implemented in main.cpp;
+// used by chesslink_server.cpp to know which driver to dispatch to.
+BoardType currentBoardType();
 
 // The current auto-report interval (ms) King's status gets resent at if
 // unchanged; defaults to a generic fallback and may be refined by a driver

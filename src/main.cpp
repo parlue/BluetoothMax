@@ -4,7 +4,9 @@
 #include <algorithm>
 
 #include "board_driver.h"
+#include "chesslink_server.h"
 #include "chessnut_board.h"
+#include "chessnut_server.h"
 #include "cynus_board.h"
 #include "millennium_board.h"
 
@@ -20,11 +22,6 @@ constexpr int kStatusLedPin = 8;
 constexpr uint32_t kMonitorBaud = 115200;
 constexpr uint32_t kReconnectIntervalMs = 3000;
 constexpr uint32_t kFallbackAutoReportIntervalMs = 41;
-
-// Standard starting position in Mode-B wire order (h..a per rank), used only
-// to filter Chessnut LED highlights -- see the comment at its use site.
-constexpr char kStartPositionWire[] =
-    "RNBKQBNRPPPPPPPP................................pppppppprnbkqbnr";
 
 HardwareSerial MillenniumSerial(1);
 
@@ -45,6 +42,43 @@ bool ledsAwaitingClear = false;
 uint32_t lastConnectAttemptMs = 0;
 BoardType activeBoardType = BoardType::Unknown;
 volatile bool connectInProgress = false;
+
+// --- BT-BT mode: dual-BLE operation when no cable-side host is present ----
+//
+// If the module is plugged into King/Phoenix, bytes arrive on the cable
+// almost immediately (King probes automatically within ~1-2s of a cable
+// connection, confirmed elsewhere in this project). If nothing at all
+// arrives within kCableDetectTimeoutMs, the module is instead running
+// standalone (USB/powerbank only) -- switch to BT-BT mode: keep the
+// existing BLE-client connection to a real e-board exactly as today, and
+// additionally advertise a second BLE role that masquerades as a real
+// ChessLink board so external chess software can connect wirelessly. This
+// mode, once entered, can only be left by a full power cycle.
+enum class HostTransport : uint8_t { Cable, ChesslinkBle, ChessnutBle };
+HostTransport activeHostTransport = HostTransport::Cable;
+
+enum class BtBtStage : uint8_t {
+  Inactive,           // cable mode chosen, or BT-BT flow already finished
+  WaitingForBoard,    // BT-BT chosen; waiting for a connected board's first status
+  ShowingReady,       // "ready" signal (center 4 squares / Cynus "OK") on screen
+  WaitingForModeSelect,  // waiting for the second-white-queen mode selection
+  ShowingConfirm,     // "confirmed" signal (corner squares / Cynus mode text) on screen
+};
+
+uint32_t bootMs = 0;
+bool btBtModeChosen = false;
+BtBtStage btBtStage = BtBtStage::Inactive;
+uint32_t btBtStageAt = 0;
+int btBtSelectedMode = -1;  // 0 = ChessLink, 1 = Chessnut (selected via 2nd white queen)
+constexpr uint32_t kCableDetectTimeoutMs = 5000;
+constexpr uint32_t kBtBtSignalHoldMs = 2000;
+
+constexpr uint8_t kCenterSquares[4] = {
+    boardSquareIndex('d', 4), boardSquareIndex('d', 5),
+    boardSquareIndex('e', 4), boardSquareIndex('e', 5)};
+constexpr uint8_t kCornerSquares[4] = {
+    boardSquareIndex('a', 1), boardSquareIndex('a', 8),
+    boardSquareIndex('h', 1), boardSquareIndex('h', 8)};
 
 enum class LedState : uint8_t { Searching, Connected };
 volatile LedState ledState = LedState::Searching;
@@ -77,14 +111,7 @@ bool anyBoardConnected() {
   }
 }
 
-void clearActiveBoardLeds() {
-  switch (activeBoardType) {
-    case BoardType::Millennium: millenniumClearLeds(); break;
-    case BoardType::Chessnut: chessnutSetHighlightedSquares(nullptr, 0); break;
-    case BoardType::Cynus: cynusClearLeds(); break;
-    default: break;
-  }
-}
+void clearActiveBoardLeds() { clearBoardLeds(activeBoardType); }
 
 struct KnownBoard {
   const char* name;
@@ -167,6 +194,126 @@ void connectTask(void*) {
   connectToBoard();
   connectInProgress = false;
   vTaskDelete(nullptr);
+}
+
+// Shows a fixed, board-type-independent signal during the BT-BT mode-
+// selection handshake: LED boards light exactly the given 4 squares (the
+// same pattern regardless of which mode is ultimately chosen -- only the
+// square SET differs between the "ready" and "confirmed" stages, not the
+// board type); Cynus has no LEDs, so it shows the given text instead.
+void showBtBtSignal(const uint8_t* squares, size_t count, const char* cynusText) {
+  switch (activeBoardType) {
+    case BoardType::Millennium: {
+      uint8_t frame[kFrameBufferSize] = {};
+      // Plain checksum, not cableHostUsesEncodedChecksum: that flag
+      // describes King/Phoenix's own cable quirk, never the real BLE
+      // board's convention, which is always plain Mode-B.
+      encodeLedFrame(squares, count, frame, /*useEncodedChecksum=*/false);
+      millenniumRelayLedFrame(frame, 167);
+      break;
+    }
+    case BoardType::Chessnut: {
+      SquareHighlight highlights[4];
+      for (size_t i = 0; i < count && i < 4; ++i) {
+        highlights[i] = {squares[i], SquareHighlightRole::Generic};
+      }
+      chessnutSetHighlightedSquares(highlights, count);
+      break;
+    }
+    case BoardType::Cynus:
+      cynusShowText(cynusText);
+      break;
+    default:
+      break;
+  }
+}
+
+// Every one of these boards' physical piece sets includes a spare white
+// queen (needed for promotion anyway), which the human places on a4 (in
+// addition to the normal starting position) to select ChessLink mode, or
+// b4 to select Chessnut mode -- user's own design, not from any reference
+// project. Returns 0/1 for the two modes, or -1 if not yet selected.
+int detectBtBtModeSelection() {
+  const uint8_t* status = cachedBoardStatusBytes();
+  if (status == nullptr) return -1;
+  int whiteQueens = 0;
+  for (int i = 0; i < 64; ++i) {
+    if (status[1 + i] == 'Q') ++whiteQueens;
+  }
+  if (whiteQueens != 2) return -1;
+  const int a4Wire = modeBStatusWireIndex(/*file0=*/0, /*rank=*/4);
+  const int b4Wire = modeBStatusWireIndex(/*file0=*/1, /*rank=*/4);
+  if (status[1 + a4Wire] == 'Q') return 0;
+  if (status[1 + b4Wire] == 'Q') return 1;
+  return -1;
+}
+
+// Drives the whole BT-BT sequence: cable-presence timeout -> wait for a
+// connected board's first status -> "ready" signal -> wait for the
+// second-white-queen mode selection -> "confirmed" signal -> start the
+// selected masquerade server. A no-op for as long as the cable is actually
+// present (the overwhelmingly common case).
+void processBtBtStateMachine() {
+  const uint32_t nowMs = millis();
+
+  if (!btBtModeChosen) {
+    if (rawUartRxBytes > 0) {
+      btBtModeChosen = true;  // cable host present -- normal cable mode, forever
+      return;
+    }
+    if (static_cast<uint32_t>(nowMs - bootMs) < kCableDetectTimeoutMs) return;
+    btBtModeChosen = true;
+    btBtStage = BtBtStage::WaitingForBoard;
+    Serial.println("BT-BT mode: no cable host detected within 5s -- switching to dual-BLE "
+                    "operation (BLE board client + ChessLink BLE masquerade server).");
+  }
+
+  switch (btBtStage) {
+    case BtBtStage::Inactive:
+      break;
+    case BtBtStage::WaitingForBoard:
+      if (anyBoardConnected() && haveCachedBoardStatus) {
+        Serial.println("BT-BT mode: board ready -- showing ready signal");
+        showBtBtSignal(kCenterSquares, 4, "OK");
+        btBtStage = BtBtStage::ShowingReady;
+        btBtStageAt = nowMs;
+      }
+      break;
+    case BtBtStage::ShowingReady:
+      if (static_cast<uint32_t>(nowMs - btBtStageAt) >= kBtBtSignalHoldMs) {
+        clearActiveBoardLeds();  // the 2s hold is over; don't leave it lit forever
+        btBtStage = BtBtStage::WaitingForModeSelect;
+      }
+      break;
+    case BtBtStage::WaitingForModeSelect: {
+      const int mode = detectBtBtModeSelection();
+      if (mode < 0) break;
+      btBtSelectedMode = mode;
+      Serial.printf("BT-BT mode: %s selected via second white queen\r\n",
+                    mode == 0 ? "ChessLink" : "Chessnut");
+      showBtBtSignal(kCornerSquares, 4, mode == 0 ? "CSLMode" : "NutMode");
+      btBtStage = BtBtStage::ShowingConfirm;
+      btBtStageAt = nowMs;
+      break;
+    }
+    case BtBtStage::ShowingConfirm:
+      if (static_cast<uint32_t>(nowMs - btBtStageAt) >= kBtBtSignalHoldMs) {
+        clearActiveBoardLeds();  // the 2s hold is over; don't leave it lit forever
+        btBtStage = BtBtStage::Inactive;
+        if (btBtSelectedMode == 0) {
+          activeHostTransport = HostTransport::ChesslinkBle;
+          if (haveCachedBoardStatus) chesslinkServerPublishStatus(cachedBoardStatus);
+          chesslinkServerStart();
+          Serial.println("BT-BT mode: ChessLink masquerade server started");
+        } else {
+          activeHostTransport = HostTransport::ChessnutBle;
+          if (haveCachedBoardStatus) chessnutServerPublishStatus(cachedBoardStatus);
+          chessnutServerStart();
+          Serial.println("BT-BT mode: Chessnut masquerade server started");
+        }
+      }
+      break;
+  }
 }
 
 void receiveFromMillenniumComputer() {
@@ -253,58 +400,11 @@ void receiveFromMillenniumComputer() {
             Serial.println();
           }
 
-          if (activeBoardType == BoardType::Millennium) {
-            millenniumSuppressNextLedAck();
-            millenniumRequestBoardStatus();
-            millenniumRelayLedFrame(uartFrame, expected);
-          } else if (activeBoardType == BoardType::Chessnut) {
-            // Sized for a full New Game/reset frame (every square that
-            // differs from the starting position at once), not just a
-            // single move's source/destination pair.
-            SquareHighlight squares[32];
-            size_t count = decodeKingLedFrame(uartFrame, squares, 32);
-
-            // Two generic (reset/error) squares sharing the same corner
-            // value can make a square sandwiched between them appear lit
-            // too, purely because it shares corners with both -- the raw
-            // corner data alone can't tell a real generic highlight apart
-            // from this geometric side effect. Only a New Game/reset frame
-            // (many squares highlighted at once) can actually produce this;
-            // a single generic-marked square is a normal, real move
-            // suggestion (e.g. Mephisto Phoenix marks moves generically
-            // rather than with King's distinct source/destination bits) and
-            // must never be filtered -- comparing it against the standard
-            // starting position wrongly ate every such suggestion for any
-            // piece that hadn't moved yet. A real ghost needs at least 2
-            // real neighbors plus itself, so only try elimination once at
-            // least 3 squares were decoded at once.
-            size_t kept = 0;
-            for (size_t i = 0; i < count; ++i) {
-              bool eliminate = false;
-              if (count >= 3 && squares[i].role == SquareHighlightRole::Generic &&
-                  haveCachedBoardStatus) {
-                const int file0 = squares[i].squareIndex % 8;
-                const int rank = squares[i].squareIndex / 8 + 1;
-                const int wireIndex = modeBStatusWireIndex(file0, rank);
-                eliminate = cachedBoardStatus[1 + wireIndex] == kStartPositionWire[wireIndex];
-              }
-              if (!eliminate) squares[kept++] = squares[i];
-            }
-            count = kept;
-
-            // Always update, even on count==0 (ambiguous/undecodable frame,
-            // e.g. two adjacent suggested squares sharing corners): leaving
-            // the PREVIOUS highlight lit instead of clearing it stuck the
-            // physical board's LEDs on a stale suggestion, which then hid
-            // the actual next move from the user.
-            chessnutSetHighlightedSquares(squares, count);
-          } else if (activeBoardType == BoardType::Cynus) {
-            // Cynus's own driver decodes the raw frame itself (engineSide-
-            // aware, with a stability wait) rather than the shared
-            // Millennium/Chessnut SquareHighlight decoder -- see
-            // cynus_board.cpp for why.
-            cynusHandleLedFrame(uartFrame);
-          }
+          // Shared with the BT-BT ChessLink masquerade path
+          // (chesslink_server.cpp) so King/Phoenix on the cable and
+          // external ChessLink software over BLE get identical per-board
+          // LED handling -- see dispatchLedFrameToBoard()'s own comment.
+          dispatchLedFrameToBoard(activeBoardType, uartFrame);
         } else if (activeBoardType == BoardType::Millennium) {
           // King never sends non-'L' commands in practice, but relay
           // anything else unchanged too, exactly as always.
@@ -342,13 +442,25 @@ void receiveFromMillenniumComputer() {
 
 bool haveAnyBoardStatus() { return haveCachedBoardStatus; }
 
+const uint8_t* cachedBoardStatusBytes() { return haveCachedBoardStatus ? cachedBoardStatus : nullptr; }
+
+BoardType currentBoardType() { return activeBoardType; }
+
 uint32_t autonomousStatusIntervalMs = kFallbackAutoReportIntervalMs;
 bool cableHostUsesEncodedChecksum = false;
 
 size_t writeFrameToKing(const uint8_t* logicalFrame, size_t length) {
+  // Routes to whichever host transport is actually active -- the King/
+  // Phoenix cable (default), or the ChessLink BLE masquerade server once
+  // BT-BT mode has started it. The name is historical (this function
+  // predates BT-BT mode); despite it, this is no longer cable-only.
+  if (activeHostTransport == HostTransport::ChesslinkBle) {
+    return chesslinkServerWriteFrame(logicalFrame, length);
+  }
   // Pre-encode odd parity into bit 7 and send as plain 8N1: this produces
   // the same 10-bit wire waveform as native 7O1 framing, which the ESP32-C3
-  // UART hardware cannot generate directly.
+  // UART hardware cannot generate directly. BLE carries plain bytes, so
+  // this encoding step only ever applies to the cable case above.
   uint8_t encoded[kFrameBufferSize] = {};
   for (size_t i = 0; i < length; ++i) encoded[i] = encodeOddParity(logicalFrame[i]);
   return MillenniumSerial.write(encoded, length);
@@ -368,10 +480,20 @@ void onBoardStatusFrame(const uint8_t frame[kModeBStatusFrameLength]) {
   haveCachedBoardStatus = true;
   lastAutonomousStatusMs = millis();
 
-  const size_t written = writeFrameToKing(frame, kModeBStatusFrameLength);
-  memcpy(lastStatusSentToKing, frame, kModeBStatusFrameLength);
-  haveSentStatusToKing = true;
-  Serial.printf("BLE -> UART: s frame, %u ASCII bytes\r\n", static_cast<unsigned>(written));
+  // Always safe to call (a no-op cache update before either server ever
+  // starts); once BT-BT mode is active and has started its selected
+  // masquerade server, this also immediately forwards to a connected
+  // client, mirroring the cable path's own immediate-forward behavior
+  // below.
+  chesslinkServerPublishStatus(frame);
+  chessnutServerPublishStatus(frame);
+
+  if (activeHostTransport == HostTransport::Cable) {
+    const size_t written = writeFrameToKing(frame, kModeBStatusFrameLength);
+    memcpy(lastStatusSentToKing, frame, kModeBStatusFrameLength);
+    haveSentStatusToKing = true;
+    Serial.printf("BLE -> UART: s frame, %u ASCII bytes\r\n", static_cast<unsigned>(written));
+  }
 
   if (wasFirstStatus || ledsAwaitingClear) {
     clearActiveBoardLeds();
@@ -388,6 +510,13 @@ void setup() {
   Serial.begin(kMonitorBaud);
   delay(1500);
 
+  // Starting point for the BT-BT cable-presence timeout (see
+  // processBtBtStateMachine()) -- set right after the boot delay/log setup,
+  // i.e. from here on is what's actually visible in the serial monitor
+  // (matches how the user times it when watching the log, rather than the
+  // ~1.5s of silent boot-delay before the first log line even appears).
+  bootMs = millis();
+
   pinMode(kStatusLedPin, OUTPUT);
   digitalWrite(kStatusLedPin, HIGH);
   xTaskCreate(statusLedTask, "status-led", 1536, nullptr, 1, nullptr);
@@ -399,10 +528,25 @@ void setup() {
   Serial.println("BLE: connection watchdog only; protocol idle until King starts it.");
 
   NimBLEDevice::init("BluetoothMax");
+
+  // Create both BT-BT masquerade servers' GATT structure (service/
+  // characteristics) now, at boot, before the BLE client role ever starts
+  // scanning/connecting -- creating one much later (once BT-BT mode is
+  // confirmed) crashed with "assert failed: ble_svc_gap_init" on real
+  // hardware, apparently from registering a new GATT server while the
+  // client role is already active. Advertising itself is still deferred to
+  // each server's own Start() function, once BT-BT mode selection actually
+  // picks one -- these init steps alone do not advertise anything or affect
+  // normal cable operation.
+  chesslinkServerInit();
+  chessnutServerInit();
 }
 
 void loop() {
   receiveFromMillenniumComputer();
+  processBtBtStateMachine();
+  chesslinkServerPoll();  // no-op until chesslinkServerStart() has run
+  chessnutServerPoll();   // no-op until chessnutServerStart() has run
 
   if (anyBoardConnected()) {
     switch (activeBoardType) {
@@ -412,11 +556,13 @@ void loop() {
       default: break;
     }
 
-    // Status changes are already forwarded to King immediately on arrival;
-    // this periodic tick only resends if the cache differs from what was
-    // last actually put on the wire, to avoid flooding the cable with
-    // identical frames at the board's own scan rate.
-    if (haveCachedBoardStatus &&
+    // Status changes are already forwarded immediately on arrival; this
+    // periodic tick only resends if the cache differs from what was last
+    // actually put on the wire, to avoid flooding the cable with identical
+    // frames at the board's own scan rate. Cable-only: the ChessLink BLE
+    // masquerade path has its own equivalent resend-on-change check inside
+    // chesslinkServerPoll(), using its own send-tracking.
+    if (activeHostTransport == HostTransport::Cable && haveCachedBoardStatus &&
         static_cast<uint32_t>(millis() - lastAutonomousStatusMs) >= autonomousStatusIntervalMs) {
       lastAutonomousStatusMs = millis();
       if (!haveSentStatusToKing ||

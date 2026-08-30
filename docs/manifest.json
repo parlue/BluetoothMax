@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v4.0 (Millennium + Chessnut + ManyaCynus)",
+  "version": "v5.0 (+ standalone BLE-to-BLE mode: ChessLink/Chessnut masquerade)",
   "new_install_prompt_erase": true,
   "builds": [
     {
