@@ -32,6 +32,42 @@ Board detection is automatic: on every (re)connect attempt, the gateway scans
 for any known board's advertised BLE name and connects to whichever one it
 finds, with no build-time board selection needed.
 
+### ManyaCynus special cases
+
+ManyaCynus is a camera-vision robot, not a per-square sensor board, so its
+driver reproduces several behaviors of a real ChessLink board rather than
+having them natively. This follows the same conventions as
+[CynusLink](https://github.com/parlue/CynusLink), an independent project for
+the same robot that this gateway's ManyaCynus support is ported from.
+
+- **Startup**: the scanned position is checked against the normal and
+  mirrored starting position before anything else; an incorrect setup is
+  rescanned automatically every 5 seconds until it matches.
+- **Options via the black King**: with the board in its starting position,
+  moving only the black King onto one of the following squares toggles a
+  setting instead of being treated as a move -- move it back to its home
+  square (or the option's own "off" square) to leave the option again:
+
+  | Black King square | Function |
+  |---|---|
+  | e5 / e6 | Sound off / on |
+  | h5 / h6 | Board-orientation flip on / off |
+  | d5 / d6 | Free Analysis mode on / off |
+  | c5 / c6 | Set Position mode on / off |
+
+- **Free Analysis mode**: while active, every scanned position is forwarded
+  to the chess computer as-is, without checking it's a legal move -- the
+  board is re-scanned automatically every 5 seconds. The connected chess
+  software also needs its own support for this mode.
+- **Castling, en passant and promotion**: reported to the chess computer as
+  the individual piece lift/place steps a physical board would produce
+  (e.g. king lifted, king placed, rook lifted, rook placed for castling),
+  not as a single jump to the final position.
+- **Display**: ManyaCynus's own screen shows the last move made (e.g.
+  "E2-E4", "0-0" for castling), "POS OK" once the starting position is
+  confirmed, and the specific offending square(s) (e.g. "+E4") when a scan
+  doesn't settle into a legal position.
+
 ## Supported chess computer modules (cable side)
 
 Tested working: MILLENNIUM King and Mephisto Phoenix. Both speak Mode B over
