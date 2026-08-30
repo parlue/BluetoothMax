@@ -157,11 +157,6 @@ that section for the one known client incompatibility.
 | v4.0 | + ManyaCynus robot support (castling, en passant, promotion) |
 | v5.0 (current) | + [Standalone mode](#standalone-mode-no-cable-computer-required): BLE-to-BLE ChessLink/Chessnut masquerade, no cable chess computer required |
 
-v1.0 and v3.0 are also kept as frozen fallback PlatformIO environments in
-this repository (`esp32-c3-superminiv2` and `esp32-c3-superminiv3`
-respectively) -- see [Firmware](#firmware) below. v2.0 was superseded by
-v3.0 before it was ever frozen as its own environment.
-
 ## Components
 
 - ESP32-C3 SuperMini
@@ -272,16 +267,6 @@ need to know which board produced the data.
 masquerade roles are self-contained modules (`chesslink_server.*`,
 `chessnut_server.*`) that answer every host command themselves using the
 same status cache, rather than relaying a real Mode B/Chessnut peer.
-
-Two additional environments are frozen snapshots of earlier,
-independently-confirmed-working versions of this same gateway (see
-[Version history](#version-history) above) -- kept as fallback builds, never
-touched by ongoing development:
-
-| Environment | Version frozen |
-|---|---|
-| `esp32-c3-superminiv2` | v1.0 (single-board, ChessLink-only) |
-| `esp32-c3-superminiv3` | v3.0 (Millennium + Chessnut + Phoenix, before ManyaCynus) |
 
 For a ready-to-flash build, see [Web installer](#web-installer) above.
 
