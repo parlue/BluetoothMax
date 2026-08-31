@@ -1,10 +1,10 @@
-#include "board_driver.h"
+#include "board_driver_v5.h"
 
 #include <cstring>
 
-#include "chessnut_board.h"
-#include "cynus_board.h"
-#include "millennium_board.h"
+#include "chessnut_board_v5.h"
+#include "cynus_board_v5.h"
+#include "millennium_board_v5.h"
 
 namespace {
 

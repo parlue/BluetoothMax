@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v5.1 (fix: Chessnut+Mephisto Phoenix status checksum; BT-BT late-cable fallback)",
+  "version": "v5.2 (fix: BearChess ChessLink LED move-suggestion decode)",
   "new_install_prompt_erase": true,
   "builds": [
     {

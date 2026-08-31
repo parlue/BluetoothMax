@@ -130,10 +130,10 @@ squares light up on Millennium/Chessnut boards, ManyaCynus shows text):
 5. Connect to the gateway from your chess software like you would to a real
    board of that type.
 
-| Masquerade | Confirmed working with | Known issue |
-|---|---|---|
-| ChessLink ("MILLENNIUM CHESS") | PicoChess, and at least one other independent ChessLink client | -- |
-| Chessnut ("Chessnut Air") | [Chess PGN Master](https://pgnmaster.kalab.com/) | Does not currently work with [BearChess](https://www.solanosoft.com/index.php?page=bearchess): the BLE link itself connects and negotiates correctly (MTU and PHY both succeed), but BearChess's own client never proceeds to GATT discovery/use. Root cause not yet identified; being investigated with BearChess's developer. |
+| Masquerade | Confirmed working with |
+|---|---|
+| ChessLink ("MILLENNIUM CHESS") | PicoChess, [BearChess](https://www.solanosoft.com/index.php?page=bearchess), and at least one other independent ChessLink client |
+| Chessnut ("Chessnut Air") | [Chess PGN Master](https://pgnmaster.kalab.com/), [BearChess](https://www.solanosoft.com/index.php?page=bearchess) |
 
 This mode is independent of, and doesn't change, normal cable operation --
 if a chess computer module is present on the cable at power-up, standalone
@@ -170,9 +170,9 @@ correctly (including New Game/reset highlighting on boards that need it
 translated), and moves -- including castling, en passant and promotion -- are
 tracked and confirmed correctly in both directions for the length of a real
 game. [Standalone mode](#standalone-mode-no-cable-computer-required)'s
-ChessLink masquerade is confirmed the same way against real ChessLink
-client software; its Chessnut masquerade against Chess PGN Master -- see
-that section for the one known client incompatibility.
+ChessLink and Chessnut masquerades are both confirmed the same way against
+real client software, including BearChess -- see that section for the full
+client compatibility list.
 
 ## Version history
 
@@ -183,7 +183,8 @@ that section for the one known client incompatibility.
 | v3.0 | + Mephisto Phoenix chess computer support (cable-side checksum auto-detect) |
 | v4.0 | + ManyaCynus robot support (castling, en passant, promotion) |
 | v5.0 | + [Standalone mode](#standalone-mode-no-cable-computer-required): BLE-to-BLE ChessLink/Chessnut masquerade, no cable chess computer required |
-| v5.1 (current) | Fix: Chessnut+Mephisto Phoenix status checksum (single-square changes and captures could silently fail to register); standalone mode now recovers automatically if a cable module boots slowly instead of needing a power cycle |
+| v5.1 | Fix: Chessnut+Mephisto Phoenix status checksum (single-square changes and captures could silently fail to register); standalone mode now recovers automatically if a cable module boots slowly instead of needing a power cycle |
+| v5.2 (current) | Fix: BearChess's ChessLink move-suggestion LEDs (a ghost-square filter built for Mephisto Phoenix's own reset splash was wrongly eating small real move suggestions from BearChess) |
 
 ## Components
 
