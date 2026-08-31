@@ -1,4 +1,4 @@
-#include "millennium_board.h"
+#include "millennium_board_v4.h"
 
 const char kMillenniumBoardName[] = "MILLENNIUM CHESS";
 
@@ -26,23 +26,9 @@ size_t bleFrameLength = 0;
 uint32_t lastBleFrameSentMs = 0;
 
 bool suppressNextRealLedAck = false;
-bool suppressNextXAck = false;
 bool pendingRegisterQuery1 = false;
 bool pendingRegisterQuery2 = false;
 bool pendingVersionQuery = false;
-
-// Single-slot "latest LED frame" instead of a FIFO queue entry -- added
-// 2026-08-31. Phoenix blinks its suggestion (re-sends 'L' frequently,
-// unlike King's one-shot steady display), and each new frame fully
-// supersedes the last: there is no reason to ever display an intermediate
-// blink phase once a newer one has arrived. Queuing every one (the old
-// behavior, via queueFrameForBle()) let them pile up faster than the
-// kBleFrameSpacingMs-throttled send rate could drain, so what the real
-// board displayed lagged further and further behind Phoenix's actual
-// current intent. A new 'L' frame simply overwrites this slot; at most one
-// is ever in flight.
-uint8_t pendingLedFrame[167] = {};
-bool havePendingLedFrame = false;
 
 void queueFrameForBle(const uint8_t* frame, size_t length) {
   if (length == 0 || uartToBleQueue == nullptr) return;
@@ -70,8 +56,6 @@ class ClientCallbacks final : public NimBLEClientCallbacks {
   void onDisconnect(NimBLEClient*, int) override {
     boardRx = nullptr;
     suppressNextRealLedAck = false;
-    suppressNextXAck = false;
-    havePendingLedFrame = false;
     pendingRegisterQuery1 = false;
     pendingRegisterQuery2 = false;
     pendingVersionQuery = false;
@@ -122,8 +106,18 @@ void queryBoardVersion() {
   lastBleFrameSentMs = millis();
 }
 
-void sendEncodedFrame(const uint8_t* frame, size_t length) {
-  const uint8_t firstByte = frame[0] & 0x7f;
+void transmitQueuedFrame() {
+  if (!millenniumIsConnected() || uartToBleQueue == nullptr) return;
+  ProtocolFrame pending{};
+  if (xQueueReceive(uartToBleQueue, &pending, 0) != pdTRUE) return;
+  const size_t length = pending.length;
+  uint8_t* frame = pending.data;
+  if (lastBleFrameSentMs != 0 &&
+      static_cast<uint32_t>(millis() - lastBleFrameSentMs) < kBleFrameSpacingMs) {
+    xQueueSendToFront(uartToBleQueue, &pending, 0);
+    return;
+  }
+
   uint8_t encoded[kFrameBufferSize];
   for (size_t i = 0; i < length; ++i) encoded[i] = encodeOddParity(frame[i]);
   const size_t mtuPayload = bleClient->getMTU() > 3 ? bleClient->getMTU() - 3 : 20;
@@ -134,33 +128,6 @@ void sendEncodedFrame(const uint8_t* frame, size_t length) {
     offset += chunk;
   }
   lastBleFrameSentMs = millis();
-  // Diagnostic added 2026-08-31 while chasing "T2's own LEDs never light" --
-  // confirms whether an 'L' frame from King/Phoenix actually made it out
-  // over BLE to the real board at all, since nothing else logs this send.
-  if (firstByte == 'L') {
-    Serial.printf("UART -> BLE: L frame relayed to real board, %u bytes\r\n",
-                  static_cast<unsigned>(length));
-  }
-}
-
-void transmitQueuedFrame() {
-  if (!millenniumIsConnected()) return;
-  if (lastBleFrameSentMs != 0 &&
-      static_cast<uint32_t>(millis() - lastBleFrameSentMs) < kBleFrameSpacingMs) {
-    return;
-  }
-  // The latest LED frame (see havePendingLedFrame's own comment) always
-  // takes priority over the generic command queue -- there's nothing more
-  // time-sensitive than what's currently being displayed.
-  if (havePendingLedFrame) {
-    havePendingLedFrame = false;
-    sendEncodedFrame(pendingLedFrame, sizeof(pendingLedFrame));
-    return;
-  }
-  if (uartToBleQueue == nullptr) return;
-  ProtocolFrame pending{};
-  if (xQueueReceive(uartToBleQueue, &pending, 0) != pdTRUE) return;
-  sendEncodedFrame(pending.data, pending.length);
 }
 
 }  // namespace
@@ -227,9 +194,7 @@ void millenniumRequestBoardStatus() {
 }
 
 void millenniumRelayLedFrame(const uint8_t* frame167, size_t length) {
-  if (length != sizeof(pendingLedFrame)) return;  // defensive: always 167 in practice
-  memcpy(pendingLedFrame, frame167, length);
-  havePendingLedFrame = true;
+  queueFrameForBle(frame167, length);
 }
 
 void millenniumRelayCommand(const uint8_t* frame, size_t length) {
@@ -247,12 +212,6 @@ void millenniumClearLeds() {
   for (size_t i = 0; i < sizeof(offLedCommand); ++i) encoded[i] = encodeOddParity(offLedCommand[i]);
   boardRx->writeValue(encoded, sizeof(encoded), true);
   lastBleFrameSentMs = millis();
-  // King/Phoenix never asked for this X -- it's purely internal housekeeping
-  // (clearing a stale LED suggestion before the next one is shown). The
-  // real board's own genuine 'x' ack must not be forwarded to the cable
-  // host, which never sent a matching X request and has no way to make
-  // sense of an unsolicited reply -- mirrors suppressNextRealLedAck for 'l'.
-  suppressNextXAck = true;
 }
 
 void millenniumPoll() {
@@ -312,17 +271,10 @@ void millenniumPoll() {
         }
 
         const bool redundantLedAck = bleFrame[0] == 'l' && suppressNextRealLedAck;
-        const bool redundantXAck = bleFrame[0] == 'x' && suppressNextXAck;
         if (redundantLedAck) {
           // King already got an instant local 'l' ack for its L command;
           // the real board's own genuine ack would be redundant.
           suppressNextRealLedAck = false;
-        } else if (redundantXAck) {
-          // Ack for our own internal clear-LEDs housekeeping command (see
-          // millenniumClearLeds()) -- King/Phoenix never sent a matching X,
-          // so forwarding this would hand it an unsolicited reply it has no
-          // request to pair it against.
-          suppressNextXAck = false;
         } else if (suppressAsOwnQueryReply) {
           // Consumed above; King never asked for this.
         } else if (bleFrame[0] == 's') {

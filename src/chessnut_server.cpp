@@ -26,7 +26,7 @@
 
 namespace {
 
-constexpr char kName[] = "Chessnut GO";
+constexpr char kName[] = "Chessnut Air";
 constexpr char kServiceBoardUuid[] = "1b7e8261-2877-41c3-b46e-cf057c562023";
 constexpr char kCharBoardReadUuid[] = "1b7e8262-2877-41c3-b46e-cf057c562023";
 constexpr char kServiceMainUuid[] = "1b7e8271-2877-41c3-b46e-cf057c562023";
@@ -546,7 +546,7 @@ void chessnutServerStart() {
   NimBLEDevice::startAdvertising();
 
   started = true;
-  Serial.printf("[CHESSNUT] advertising as Chessnut GO, our BLE address is %s "
+  Serial.printf("[CHESSNUT] advertising as Chessnut Air, our BLE address is %s "
                 "(the real board's is 00:1b:10:51:0a:dd -- a client connecting to the "
                 "wrong one would explain total silence despite a correct board-type "
                 "selection)\r\n",

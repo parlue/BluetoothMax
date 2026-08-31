@@ -127,7 +127,17 @@ void encodeLedFrame(const uint8_t* squareIndices, size_t count, uint8_t frame167
 void dispatchLedFrameToBoard(BoardType type, const uint8_t frame167[167]) {
   if (type == BoardType::Millennium) {
     millenniumSuppressNextLedAck();
-    millenniumRequestBoardStatus();
+    // millenniumRequestBoardStatus() used to fire here on every single 'L'
+    // frame -- removed 2026-08-31. It writes directly (bypassing the queue
+    // transmitQueuedFrame() uses) and stamps the same lastBleFrameSentMs
+    // throttle timestamp that gates the LED-frame queue -- so with Phoenix
+    // sending 'L' frequently (it blinks its suggestion), this kept
+    // resetting the throttle before the queued LED frame ever got a turn,
+    // permanently starving it: T2's own physical LEDs never lit at all,
+    // confirmed on real hardware (no "L frame relayed" log line ever
+    // appeared despite dozens of L frames arriving). Not needed anyway --
+    // a real board already streams status continuously on its own
+    // (register 2 auto-report mode, confirmed non-zero on this unit).
     millenniumRelayLedFrame(frame167, 167);
   } else if (type == BoardType::Chessnut) {
     // Sized for a full New Game/reset frame (every square that differs from
@@ -162,12 +172,62 @@ void dispatchLedFrameToBoard(BoardType type, const uint8_t frame167[167]) {
     }
     count = kept;
 
-    // Always update, even on count==0 (ambiguous/undecodable frame, e.g.
-    // two adjacent suggested squares sharing corners): leaving the PREVIOUS
-    // highlight lit instead of clearing it stuck the physical board's LEDs
-    // on a stale suggestion, which then hid the actual next move from the
-    // user.
-    chessnutSetHighlightedSquares(squares, count);
+    // count==0 (no real suggestion, or an ambiguous/undecodable frame, e.g.
+    // two adjacent suggested squares sharing corners) does NOT mean "clear
+    // the LEDs" here -- Phoenix re-sends an empty 'L' frame continuously
+    // (confirmed on real hardware), so unconditionally clearing on every
+    // one of those used to erase chessnut_board.cpp's own local "square is
+    // missing its piece" highlight within about a second of it appearing,
+    // long before the player could act on it. Defer to that local display
+    // instead.
+    phoenixHasActiveLedSuggestion = count > 0;
+
+    // A real physical discrepancy always wins over Phoenix's own suggestion,
+    // even a currently-active one -- confirmed on real hardware 2026-08-31
+    // that the reverse priority let a stale Phoenix suggestion (still
+    // blinking from before a capture started) silently swallow the "piece
+    // is missing" indicator during exactly the moment it mattered most: the
+    // player lifts the opponent's piece to capture, and nothing showed that
+    // the square was now empty. Phoenix's own suggestion is moot anyway
+    // until the board is physically corrected, so it can wait.
+    if (chessnutHasLocalDeviation()) {
+      chessnutShowLocalBoardDeviations();
+    } else if (count > 0) {
+      // Mephisto Phoenix reveals one move by alternating between two
+      // single-square frames over time (source, then destination, then
+      // back) rather than marking both at once -- relaying each frame as
+      // it arrives made Chessnut's LEDs visibly blink/alternate along with
+      // Phoenix's own cycle. The user wants a steady display instead (both
+      // squares lit together, no blinking), so accumulate recently-seen
+      // suggested squares here and show the union. A 3rd, unrelated square
+      // appearing (accumulator already has 2 *different* squares) means
+      // Phoenix moved on to suggesting something else -- start over with
+      // just the new one instead of accumulating unboundedly.
+      static SquareHighlight accumulated[2];
+      static size_t accumulatedCount = 0;
+      for (size_t i = 0; i < count; ++i) {
+        bool alreadyKnown = false;
+        for (size_t j = 0; j < accumulatedCount; ++j) {
+          if (accumulated[j].squareIndex == squares[i].squareIndex) {
+            alreadyKnown = true;
+            break;
+          }
+        }
+        if (alreadyKnown) continue;
+        if (accumulatedCount < 2) {
+          accumulated[accumulatedCount++] = squares[i];
+        } else {
+          // Both slots already hold a different square than this one --
+          // this is a new suggestion cycle, discard the stale pair entirely
+          // rather than mixing one old square with the new one.
+          accumulated[0] = squares[i];
+          accumulatedCount = 1;
+        }
+      }
+      chessnutSetHighlightedSquares(accumulated, accumulatedCount);
+    } else {
+      chessnutShowLocalBoardDeviations();
+    }
   } else if (type == BoardType::Cynus) {
     // Cynus's own driver decodes the raw frame itself (engineSide-aware,
     // with a stability wait) rather than the shared decoder above -- see

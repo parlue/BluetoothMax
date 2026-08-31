@@ -30,14 +30,52 @@ size_t uartFrameLength = 0;
 uint32_t rawUartRxBytes = 0;
 uint32_t discardedUartRxBytes = 0;
 
+// Triggered, time-boxed raw-byte capture. Deliberately small and dumped in
+// ONE write, not one Serial.printf() per byte -- the first version of this
+// (2026-08-31, reverted same day) used an 8KB buffer and a per-byte printf
+// loop for the dump; at this cable's real traffic density (heartbeat alone
+// is ~20-24 sends/sec x 67 bytes), a 2s window can genuinely fill 8KB, and
+// thousands of individual blocking Serial.printf() calls over native
+// USB-CDC right as the host's USB descriptor may still be settling after a
+// fresh flash is a very plausible cause of the total, unrecoverable hang
+// (no output at all, survived a full USB unplug/replug) seen immediately
+// after that version was first tested. Smaller buffer, and the whole hex
+// dump is built into one local buffer and sent as a single Serial.write().
+constexpr uint32_t kVerboseCableLogWindowMs = 2000;
+constexpr size_t kVerboseCableLogBufferSize = 512;
+uint8_t verboseCableLogBuffer[kVerboseCableLogBufferSize];
+size_t verboseCableLogLength = 0;
+uint32_t verboseCableLogUntilMs = 0;
+bool verboseCableLogArmed = false;
+
+// Builds the whole hex dump into one local buffer and sends it with a
+// single Serial.write() -- not one Serial.printf() per byte -- specifically
+// to avoid the hang the first (reverted) version of this feature caused.
+void dumpVerboseCableLog() {
+  if (verboseCableLogLength == 0) {
+    Serial.println("[RAW CAPTURE] window closed; no cable bytes seen");
+    return;
+  }
+  static char hexOut[kVerboseCableLogBufferSize * 3 + 64];
+  int pos = snprintf(hexOut, sizeof(hexOut), "[RAW CAPTURE] %u byte(s) from Phoenix:\r\n",
+                      static_cast<unsigned>(verboseCableLogLength));
+  for (size_t i = 0; i < verboseCableLogLength && pos + 3 < static_cast<int>(sizeof(hexOut)); ++i) {
+    pos += snprintf(hexOut + pos, sizeof(hexOut) - pos, "%02X ", verboseCableLogBuffer[i]);
+  }
+  hexOut[pos++] = '\r';
+  hexOut[pos++] = '\n';
+  Serial.write(reinterpret_cast<const uint8_t*>(hexOut), pos);
+}
+
 uint8_t cachedBoardStatus[kModeBStatusFrameLength] = {};
 bool haveCachedBoardStatus = false;
-uint32_t lastAutonomousStatusMs = 0;
 uint8_t lastStatusSentToKing[kModeBStatusFrameLength] = {};
 bool haveSentStatusToKing = false;
+uint32_t lastCableStatusSendMs = 0;
 uint8_t lastLoggedStatus[kModeBStatusFrameLength] = {};
 bool haveLoggedStatus = false;
 bool ledsAwaitingClear = false;
+
 
 uint32_t lastConnectAttemptMs = 0;
 BoardType activeBoardType = BoardType::Unknown;
@@ -72,6 +110,19 @@ uint32_t btBtStageAt = 0;
 int btBtSelectedMode = -1;  // 0 = ChessLink, 1 = Chessnut (selected via 2nd white queen)
 constexpr uint32_t kCableDetectTimeoutMs = 5000;
 constexpr uint32_t kBtBtSignalHoldMs = 2000;
+
+// Fallback added 2026-08-31 at the user's explicit direction: if Phoenix is
+// still mid-boot when this module powers up, the initial 5s cable-detect
+// window can elapse with nothing seen yet, wrongly committing to
+// standalone BT-BT mode even though a cable host is actually present and
+// about to start talking. Previously this could only be undone by a full
+// power cycle. Now: once standalone BT-BT operation has been chosen, any
+// cable byte seen at ANY later point (whichever BT-BT sub-stage we're in,
+// or even after BT-BT setup has fully completed and a masquerade server is
+// already running) immediately restarts the whole module, so it re-runs
+// the boot-time cable-detect logic fresh and this time correctly lands in
+// normal cable mode.
+bool cableFallbackArmed = false;
 
 constexpr uint8_t kCenterSquares[4] = {
     boardSquareIndex('d', 4), boardSquareIndex('d', 5),
@@ -180,6 +231,7 @@ bool connectToBoard() {
   haveSentStatusToKing = false;
   haveLoggedStatus = false;
   ledsAwaitingClear = false;
+  lastCableStatusSendMs = millis();
   autonomousStatusIntervalMs = kFallbackAutoReportIntervalMs;
   return true;
 }
@@ -264,6 +316,7 @@ void processBtBtStateMachine() {
     if (static_cast<uint32_t>(nowMs - bootMs) < kCableDetectTimeoutMs) return;
     btBtModeChosen = true;
     btBtStage = BtBtStage::WaitingForBoard;
+    cableFallbackArmed = true;
     Serial.println("BT-BT mode: no cable host detected within 5s -- switching to dual-BLE "
                     "operation (BLE board client + ChessLink BLE masquerade server).");
   }
@@ -316,11 +369,120 @@ void processBtBtStateMachine() {
   }
 }
 
+// Small EEPROM-style register set, answered directly for cable hosts talking
+// to a non-Millennium board (Chessnut, Cynus) -- these boards have no real
+// Mode-B peer to relay S/V/X/T/R/W to/from, so (unlike millenniumRelayCommand())
+// nothing ever answered them before this, only 'L' (handled separately,
+// above/before this dispatch). Ported from chesslink_server.cpp's own
+// handleFrame(), which already does exactly this for the BLE ChessLink
+// masquerade role -- ChessLink/Chessnut real-hardware testing (2026-08-30)
+// found Phoenix stops reacting to further moves after a capture when
+// relaying Chessnut's own status; since Phoenix is a genuine Mode-B host, it
+// may send any of these commands on its own initiative (a real Millennium
+// board always answers them), and getting no reply at all to one would
+// explain it appearing to "freeze" independent of anything about capture
+// timing/content specifically -- worth ruling out this real, previously
+// unaddressed protocol gap before assuming a capture-specific content bug.
+uint8_t cableRegisters[256] = {};
+
+void resetCableRegisters() {
+  memset(cableRegisters, 0, sizeof(cableRegisters));
+  cableRegisters[1] = 0x14;
+  cableRegisters[4] = 0x0F;
+}
+
+bool cableHexNibble(uint8_t c, int& value) {
+  c &= 0x7f;
+  if (c >= '0' && c <= '9') { value = c - '0'; return true; }
+  if (c >= 'A' && c <= 'F') { value = c - 'A' + 10; return true; }
+  if (c >= 'a' && c <= 'f') { value = c - 'a' + 10; return true; }
+  return false;
+}
+
+bool cableHexByte(uint8_t hi, uint8_t lo, uint8_t& out) {
+  int h, l;
+  if (!cableHexNibble(hi, h) || !cableHexNibble(lo, l)) return false;
+  out = static_cast<uint8_t>((h << 4) | l);
+  return true;
+}
+
+void appendCableHex(uint8_t* out, size_t& pos, uint8_t value) {
+  static constexpr char hex[] = "0123456789ABCDEF";
+  out[pos++] = static_cast<uint8_t>(hex[value >> 4]);
+  out[pos++] = static_cast<uint8_t>(hex[value & 0x0F]);
+}
+
+// All replies built here use the plain checksum convention, never
+// cableHostUsesEncodedChecksum -- see sendCableStatusFrame()'s own comment
+// in chessnut_board.cpp for the full reasoning (found 2026-08-31 via
+// Elfacun/Diablillo's proven-working reference source): a real Mode-B
+// board's outgoing checksum is always computed over plain content, with
+// odd-parity encoding applied to the whole frame afterward as a separate
+// step. cableHostUsesEncodedChecksum only describes how to interpret
+// Phoenix's OWN incoming frames, not what convention our replies should
+// use.
+void handleNonMillenniumCableCommand(const uint8_t* frame, size_t length) {
+  switch (frame[0] & 0x7f) {
+    case 'S':
+      if (haveCachedBoardStatus) writeFrameToKing(cachedBoardStatus, sizeof(cachedBoardStatus));
+      break;
+    case 'V': {
+      uint8_t reply[7] = {'v', '0', '1', '0', '0', 0, 0};
+      computeModeBChecksumHex(reply + 5, reply, 5, /*useEncodedConvention=*/false);
+      writeFrameToKing(reply, sizeof(reply));
+      break;
+    }
+    case 'X': {
+      clearActiveBoardLeds();
+      uint8_t reply[3] = {'x', 0, 0};
+      computeModeBChecksumHex(reply + 1, reply, 1, /*useEncodedConvention=*/false);
+      writeFrameToKing(reply, sizeof(reply));
+      break;
+    }
+    case 'T':
+      resetCableRegisters();
+      Serial.println("[CABLE] non-Millennium reset command received; register defaults restored");
+      break;  // no reply per spec
+    case 'R': {
+      if (length < 5) break;
+      uint8_t addr;
+      if (!cableHexByte(frame[1], frame[2], addr)) break;
+      uint8_t reply[7];
+      size_t pos = 0;
+      reply[pos++] = 'r';
+      appendCableHex(reply, pos, addr);
+      appendCableHex(reply, pos, cableRegisters[addr]);
+      computeModeBChecksumHex(reply + pos, reply, pos, /*useEncodedConvention=*/false);
+      writeFrameToKing(reply, pos + 2);
+      break;
+    }
+    case 'W': {
+      if (length < 7) break;
+      uint8_t addr, value;
+      if (!cableHexByte(frame[1], frame[2], addr) || !cableHexByte(frame[3], frame[4], value)) break;
+      cableRegisters[addr] = value;
+      uint8_t reply[7];
+      size_t pos = 0;
+      reply[pos++] = 'w';
+      appendCableHex(reply, pos, addr);
+      appendCableHex(reply, pos, value);
+      computeModeBChecksumHex(reply + pos, reply, pos, /*useEncodedConvention=*/false);
+      writeFrameToKing(reply, pos + 2);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 void receiveFromMillenniumComputer() {
   size_t completedFrames = 0;
   while (MillenniumSerial.available() > 0) {
     const uint8_t raw = static_cast<uint8_t>(MillenniumSerial.read());
     ++rawUartRxBytes;
+    if (verboseCableLogArmed && verboseCableLogLength < kVerboseCableLogBufferSize) {
+      verboseCableLogBuffer[verboseCableLogLength++] = raw;
+    }
     uartFrame[uartFrameLength++] = raw & 0x7f;
     while (uartFrameLength > 0) {
       const size_t expected = modeBCommandLength(uartFrame[0]);
@@ -360,14 +522,25 @@ void receiveFromMillenniumComputer() {
         }
         if (uartFrame[0] == 'L' && expected == 167) {
           // The checksum of a bare 'l' ack is content-independent, so we can
-          // answer instantly instead of waiting on a BLE round trip.
+          // answer instantly instead of waiting on a BLE round trip. Plain
+          // convention, not cableHostUsesEncodedChecksum -- see
+          // sendCableStatusFrame()'s comment in chessnut_board.cpp. This is
+          // the well-established "l6C" ack; computing it with the encoded
+          // convention instead would have silently sent "lEC" to Phoenix.
           uint8_t localLedAck[3] = {'l', 0, 0};
-          computeModeBChecksumHex(localLedAck + 1, localLedAck, 1, cableHostUsesEncodedChecksum);
+          computeModeBChecksumHex(localLedAck + 1, localLedAck, 1, /*useEncodedConvention=*/false);
           writeFrameToKing(localLedAck, sizeof(localLedAck));
 
-          // King may only accept a reply within a single probe cycle, which
-          // a fresh BLE round trip can miss -- send the cached status
-          // immediately alongside the ack, then also kick off a fresh fetch.
+          // King/Phoenix may only accept a reply within a single probe
+          // cycle, which a fresh BLE round trip can miss -- send the cached
+          // status immediately alongside the ack, then also kick off a
+          // fresh fetch. A 2026-08-30 attempt to skip this specifically for
+          // Phoenix (reasoning: it blinks, so this path fires far more often
+          // for it than for King's fixed LED display, risking a redundant-
+          // status flood) was reverted 2026-08-31 -- with it skipped,
+          // Phoenix stopped auto-recognizing a freshly-built starting
+          // position as a new game at all, a regression from behavior that
+          // had reliably worked before. Unconditional for both hosts again.
           if (haveCachedBoardStatus) {
             writeFrameToKing(cachedBoardStatus, sizeof(cachedBoardStatus));
           }
@@ -409,6 +582,13 @@ void receiveFromMillenniumComputer() {
           // King never sends non-'L' commands in practice, but relay
           // anything else unchanged too, exactly as always.
           millenniumRelayCommand(uartFrame, expected);
+        } else {
+          // Chessnut/Cynus have no real Mode-B peer to relay to/from -- see
+          // handleNonMillenniumCableCommand()'s own comment for why this
+          // exists and what real symptom it's meant to close.
+          Serial.printf("[CABLE] non-L command from host: %c\r\n",
+                        static_cast<char>(uartFrame[0] & 0x7f));
+          handleNonMillenniumCableCommand(uartFrame, expected);
         }
       } else {
         ++discardedUartRxBytes;
@@ -466,6 +646,29 @@ size_t writeFrameToKing(const uint8_t* logicalFrame, size_t length) {
   return MillenniumSerial.write(encoded, length);
 }
 
+void armVerboseCableLog() {
+  verboseCableLogLength = 0;
+  verboseCableLogUntilMs = millis() + kVerboseCableLogWindowMs;
+  verboseCableLogArmed = true;
+}
+
+// Prints the wire frame's 64 squares in ordinary human-readable FEN
+// placement order (rank 8 down to rank 1, file a to file h) -- purely a
+// diagnostic aid, added 2026-08-31 so the wire frame's own h->a per-rank
+// mirroring (established and validated against real King hardware; see
+// modeBStatusWireIndex()) never has to be mentally undone by eye again.
+// Does not affect what gets sent anywhere.
+void logHumanReadableFen(const uint8_t frame[kModeBStatusFrameLength]) {
+  Serial.print("[FEN] ");
+  for (int rank = 8; rank >= 1; --rank) {
+    for (int file0 = 0; file0 < 8; ++file0) {
+      Serial.write(frame[1 + modeBStatusWireIndex(file0, rank)]);
+    }
+    if (rank > 1) Serial.print('/');
+  }
+  Serial.println();
+}
+
 void onBoardStatusFrame(const uint8_t frame[kModeBStatusFrameLength]) {
   if (!haveLoggedStatus || memcmp(lastLoggedStatus, frame, kModeBStatusFrameLength) != 0) {
     memcpy(lastLoggedStatus, frame, kModeBStatusFrameLength);
@@ -473,12 +676,12 @@ void onBoardStatusFrame(const uint8_t frame[kModeBStatusFrameLength]) {
     Serial.print("[BOARD STATUS] ");
     Serial.write(frame, kModeBStatusFrameLength);
     Serial.println();
+    logHumanReadableFen(frame);
   }
 
   const bool wasFirstStatus = !haveCachedBoardStatus;
   memcpy(cachedBoardStatus, frame, kModeBStatusFrameLength);
   haveCachedBoardStatus = true;
-  lastAutonomousStatusMs = millis();
 
   // Always safe to call (a no-op cache update before either server ever
   // starts); once BT-BT mode is active and has started its selected
@@ -488,14 +691,53 @@ void onBoardStatusFrame(const uint8_t frame[kModeBStatusFrameLength]) {
   chesslinkServerPublishStatus(frame);
   chessnutServerPublishStatus(frame);
 
-  if (activeHostTransport == HostTransport::Cable) {
+  // Forward every board-status change to King/Phoenix immediately and
+  // unmodified, exactly as the connected board reported it -- no buffering,
+  // debouncing, or coalescing of any kind. Per the user's own direct
+  // instruction (2026-08-31), after multiple coalescing/debounce attempts
+  // (2026-08-30) each failed to fix real-hardware capture handling against
+  // a Chessnut board + Mephisto Phoenix: a real board has no idea what's
+  // "right" or "wrong" -- it just reports a change the instant one happens
+  // (a lift is a status with the piece missing, a capture is a natural
+  // 3-update sequence), and artificial pauses cost blitz players real time
+  // for no proven benefit. This is also what a King-tested real Millennium/
+  // Supreme (T2) board and Free Analysis mode already do.
+  //
+  // Chessnut-only exception, added 2026-08-31: a raw cable capture proved
+  // Phoenix sends its own 'L' frames continuously, back-to-back, roughly
+  // every ~43ms (never once per second -- that was only our own throttled
+  // diagnostic print) -- the cable is nearly saturated with Phoenix's own
+  // outbound traffic essentially all the time. This immediate send fires
+  // on our own independent schedule (whenever a BLE notification happens
+  // to arrive), completely unsynchronized with that -- a plausible
+  // mechanism for landing exactly when Phoenix's own receiver is mid-
+  // transmit and not listening. The 'L'-frame handler below already
+  // resends the freshly-updated cachedBoardStatus on every incoming 'L'
+  // (at most ~43ms away, in the same reply slot the already-proven-
+  // reliable local 'l' ack uses) -- for Chessnut, rely on that
+  // synchronized path alone instead of also firing here, unsynchronized.
+  // T2/Millennium (relayed byte-for-byte from a real board, already
+  // proven to work end-to-end) and Cynus are untouched.
+  if (activeHostTransport == HostTransport::Cable && activeBoardType != BoardType::Chessnut) {
     const size_t written = writeFrameToKing(frame, kModeBStatusFrameLength);
     memcpy(lastStatusSentToKing, frame, kModeBStatusFrameLength);
     haveSentStatusToKing = true;
+    lastCableStatusSendMs = millis();
     Serial.printf("BLE -> UART: s frame, %u ASCII bytes\r\n", static_cast<unsigned>(written));
   }
 
-  if (wasFirstStatus || ledsAwaitingClear) {
+  // Skipped for a real Millennium/Supreme (T2) board: unlike Chessnut (which
+  // needs an explicit clear between suggestions, or a stale highlight stays
+  // lit and hides the next one), T2 speaks native Mode-B and gets Phoenix's
+  // own 'L' frame relayed to it byte-for-byte (see dispatchLedFrameToBoard())
+  // -- a new L frame already fully replaces whatever T2 was showing, no
+  // separate clear needed. Found 2026-08-31: T2 reports status extremely
+  // frequently (no dedupe, unlike Chessnut's own driver), so with Phoenix
+  // also sending 'L' frequently (it blinks), ledsAwaitingClear kept getting
+  // set and consumed on the very next status update -- sending T2 an 'X'
+  // moments after every highlight, clearing it right back off before it was
+  // ever visible.
+  if (activeBoardType != BoardType::Millennium && (wasFirstStatus || ledsAwaitingClear)) {
     clearActiveBoardLeds();
     ledsAwaitingClear = false;
   }
@@ -540,10 +782,25 @@ void setup() {
   // normal cable operation.
   chesslinkServerInit();
   chessnutServerInit();
+
+  resetCableRegisters();
 }
 
 void loop() {
+  if (verboseCableLogArmed && static_cast<int32_t>(millis() - verboseCableLogUntilMs) >= 0) {
+    verboseCableLogArmed = false;
+    dumpVerboseCableLog();
+  }
+
   receiveFromMillenniumComputer();
+
+  if (cableFallbackArmed && rawUartRxBytes > 0) {
+    Serial.println("Cable data detected while in standalone BT-BT mode -- "
+                    "restarting to switch to normal cable mode.");
+    delay(50);
+    ESP.restart();
+  }
+
   processBtBtStateMachine();
   chesslinkServerPoll();  // no-op until chesslinkServerStart() has run
   chessnutServerPoll();   // no-op until chessnutServerStart() has run
@@ -556,20 +813,62 @@ void loop() {
       default: break;
     }
 
-    // Status changes are already forwarded immediately on arrival; this
-    // periodic tick only resends if the cache differs from what was last
-    // actually put on the wire, to avoid flooding the cable with identical
-    // frames at the board's own scan rate. Cable-only: the ChessLink BLE
-    // masquerade path has its own equivalent resend-on-change check inside
-    // chesslinkServerPoll(), using its own send-tracking.
-    if (activeHostTransport == HostTransport::Cable && haveCachedBoardStatus &&
-        static_cast<uint32_t>(millis() - lastAutonomousStatusMs) >= autonomousStatusIntervalMs) {
-      lastAutonomousStatusMs = millis();
-      if (!haveSentStatusToKing ||
-          memcmp(lastStatusSentToKing, cachedBoardStatus, sizeof(cachedBoardStatus)) != 0) {
-        writeFrameToKing(cachedBoardStatus, sizeof(cachedBoardStatus));
-        memcpy(lastStatusSentToKing, cachedBoardStatus, sizeof(lastStatusSentToKing));
-        haveSentStatusToKing = true;
+    // Status changes are already forwarded immediately on arrival in
+    // onBoardStatusFrame(). This periodic tick ALSO resends the current
+    // status at autonomousStatusIntervalMs even when *unchanged* -- not
+    // just on a content diff -- to match the Magic Board protocol spec's
+    // own default (register 02 "Automatic reports": 000 = "send status on
+    // every scan", the out-of-the-box behavior, not gated on change at
+    // all). millennium_board.cpp's own relay of a real board never filters
+    // by change either (every incoming 's' frame goes straight to
+    // onBoardStatusFrame(), see its own onBoardStatusFrame() dispatch), so
+    // a real Millennium board naturally gives King/Phoenix this same
+    // continuous heartbeat; chessnut_board.cpp explicitly dedupes identical
+    // raw frames before ever reaching onBoardStatusFrame(), so Chessnut-
+    // sourced status previously only ever reached the cable on a genuine
+    // change -- a real, structural difference from what Phoenix has always
+    // been tested against, found and fixed 2026-08-30 while chasing a
+    // real-hardware bug where Phoenix stopped reacting after a capture.
+    // Cable-only: the ChessLink BLE masquerade path has its own equivalent
+    // resend-on-change check inside chesslinkServerPoll(), using its own
+    // send-tracking, and deliberately does NOT need this (BLE ChessLink
+    // clients tested fine without a heartbeat).
+    //
+    // Chessnut-excluded 2026-08-31, alongside the equivalent change in
+    // onBoardStatusFrame(): this heartbeat fires on our own independent
+    // ~41ms timer, unsynchronized with Phoenix's own now-confirmed
+    // continuous ~43ms 'L'-frame transmission -- exactly the same
+    // unsynchronized-collision risk the immediate-send skip above was
+    // removed for. Chessnut status now reaches Phoenix exclusively via the
+    // 'L'-frame handler's own cachedBoardStatus resend (synchronized to
+    // Phoenix's own reply-expecting slot). T2/Millennium and Cynus keep
+    // this heartbeat unchanged.
+    if (activeHostTransport == HostTransport::Cable && activeBoardType != BoardType::Chessnut &&
+        haveCachedBoardStatus &&
+        (!haveSentStatusToKing ||
+         memcmp(lastStatusSentToKing, cachedBoardStatus, sizeof(cachedBoardStatus)) != 0 ||
+         static_cast<uint32_t>(millis() - lastCableStatusSendMs) >= autonomousStatusIntervalMs)) {
+      writeFrameToKing(cachedBoardStatus, sizeof(cachedBoardStatus));
+      memcpy(lastStatusSentToKing, cachedBoardStatus, sizeof(lastStatusSentToKing));
+      haveSentStatusToKing = true;
+      lastCableStatusSendMs = millis();
+      // Diagnostic added 2026-08-31: unlike the immediate-forward path in
+      // onBoardStatusFrame(), this periodic heartbeat resend never printed
+      // anything, so there was no way to see from the log whether it's
+      // actually keeping up at autonomousStatusIntervalMs for Chessnut (a
+      // real board like T2 gives this same density "for free" -- every one
+      // of its own un-deduped raw notifications goes through the immediate
+      // path and prints there instead). Rate-limited to 1/s like [L DIAG]
+      // so it doesn't flood the log at a ~41ms native rate.
+      static uint32_t heartbeatSendCount = 0;
+      static uint32_t lastHeartbeatLogAt = 0;
+      ++heartbeatSendCount;
+      if (static_cast<uint32_t>(millis() - lastHeartbeatLogAt) >= 1000) {
+        Serial.printf("[HEARTBEAT] %lu resend(s) in the last ~1s (target interval %lums)\r\n",
+                      static_cast<unsigned long>(heartbeatSendCount),
+                      static_cast<unsigned long>(autonomousStatusIntervalMs));
+        heartbeatSendCount = 0;
+        lastHeartbeatLogAt = millis();
       }
     }
   }
@@ -584,14 +883,15 @@ void loop() {
 
   static uint32_t lastStatusMs = 0;
   if (static_cast<uint32_t>(nowMs - lastStatusMs) >= 10000) {
-    Serial.printf("Gateway: BLE=%s, board=%s, UART-RX(raw)=%lu, discarded=%lu\r\n",
+    Serial.printf("Gateway: BLE=%s, board=%s, UART-RX(raw)=%lu, discarded=%lu, chessnutBleDropped=%lu\r\n",
                   anyBoardConnected() ? "connected" : "offline",
                   activeBoardType == BoardType::Millennium ? "millennium"
                   : activeBoardType == BoardType::Chessnut  ? "chessnut"
                   : activeBoardType == BoardType::Cynus     ? "cynus"
                                                              : "none",
                   static_cast<unsigned long>(rawUartRxBytes),
-                  static_cast<unsigned long>(discardedUartRxBytes));
+                  static_cast<unsigned long>(discardedUartRxBytes),
+                  static_cast<unsigned long>(chessnutDroppedBoardPackets()));
     lastStatusMs = nowMs;
   }
 

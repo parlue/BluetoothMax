@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v5.0 (+ standalone BLE-to-BLE mode: ChessLink/Chessnut masquerade)",
+  "version": "v5.1 (fix: Chessnut+Mephisto Phoenix status checksum; BT-BT late-cable fallback)",
   "new_install_prompt_erase": true,
   "builds": [
     {
