@@ -73,15 +73,42 @@ the same robot that this gateway's ManyaCynus support is ported from.
   confirmed, and the specific offending square(s) (e.g. "+E4") when a scan
   doesn't settle into a legal position.
 
+## Startup sequence
+
+Follow this order every time, especially when using a Mephisto Phoenix or
+Chess Element module -- both can take a few seconds to boot, and the gateway
+only gets one look at the cable during that window:
+
+1. **Make sure the USB port has no power on it.** Don't have the gateway
+   powered from USB (e.g. still plugged into a computer or power bank) at
+   the same time it's powered from the chess computer module's cable -- power
+   the gateway from the module only, exactly as the [wiring diagram](#power)
+   describes.
+2. Power on the chess computer module and **wait until it has fully booted**
+   before doing anything else.
+3. **Only then** switch on the e-board (Chessnut, MILLENNIUM Supreme T2 BT,
+   ManyaCynus, etc.).
+
+If the module is unusually slow to boot and the gateway's own 5-second cable
+check elapses first, it falls back to [standalone mode](#standalone-mode-no-cable-computer-required)
+as described below -- but this is self-correcting: as soon as the gateway
+sees any data arrive on the cable after that, even minutes later, it
+automatically drops any standalone BLE-to-BLE connection and restarts itself
+into normal cable mode. No manual power cycle is needed to recover from a
+slow-booting module.
+
 ## Standalone mode (no cable computer required)
 
 If no chess computer module is detected on the cable within 5 seconds of
-power-up, the gateway switches permanently (until the next power cycle) into
-a standalone mode: it keeps its normal BLE connection to the e-board, and
-**additionally** starts advertising itself as a BLE peripheral -- masquerading
-as either a genuine ChessLink board or a genuine Chessnut board -- so wireless
-chess software can connect directly to the gateway with no chess computer
-module in the loop at all.
+power-up, the gateway switches into a standalone mode: it keeps its normal
+BLE connection to the e-board, and **additionally** starts advertising itself
+as a BLE peripheral -- masquerading as either a genuine ChessLink board or a
+genuine Chessnut board -- so wireless chess software can connect directly to
+the gateway with no chess computer module in the loop at all. As covered
+under [Startup sequence](#startup-sequence) above, this is automatically
+undone (with a self-restart back into normal cable mode) the moment cable
+data is later detected, so it's safe even if a module just happened to boot
+slowly rather than being genuinely absent.
 
 **Setup sequence** (all signalled on the connected e-board itself -- LED
 squares light up on Millennium/Chessnut boards, ManyaCynus shows text):
@@ -96,7 +123,7 @@ squares light up on Millennium/Chessnut boards, ManyaCynus shows text):
      "MILLENNIUM CHESS", the same name and protocol a real Millennium
      Supreme board uses.
    - **b4** selects Chessnut masquerade -- the gateway advertises as
-     "Chessnut GO", speaking Chessnut's own native BLE protocol.
+     "Chessnut Air", speaking Chessnut's own native BLE protocol.
 4. **Confirmed signal**: the four corner squares light up (ManyaCynus:
    "CSLMode" / "NutMode") for 2 seconds, then clear, and the selected
    masquerade starts advertising.
@@ -106,7 +133,7 @@ squares light up on Millennium/Chessnut boards, ManyaCynus shows text):
 | Masquerade | Confirmed working with | Known issue |
 |---|---|---|
 | ChessLink ("MILLENNIUM CHESS") | PicoChess, and at least one other independent ChessLink client | -- |
-| Chessnut ("Chessnut GO") | [Chess PGN Master](https://pgnmaster.kalab.com/) | Does not currently work with [BearChess](https://www.solanosoft.com/index.php?page=bearchess): the BLE link itself connects and negotiates correctly (MTU and PHY both succeed), but BearChess's own client never proceeds to GATT discovery/use. Root cause not yet identified; being investigated with BearChess's developer. |
+| Chessnut ("Chessnut Air") | [Chess PGN Master](https://pgnmaster.kalab.com/) | Does not currently work with [BearChess](https://www.solanosoft.com/index.php?page=bearchess): the BLE link itself connects and negotiates correctly (MTU and PHY both succeed), but BearChess's own client never proceeds to GATT discovery/use. Root cause not yet identified; being investigated with BearChess's developer. |
 
 This mode is independent of, and doesn't change, normal cable operation --
 if a chess computer module is present on the cable at power-up, standalone
@@ -155,7 +182,8 @@ that section for the one known client incompatibility.
 | v2.0 | + Chessnut Air/GO/Pro support (multi-board) |
 | v3.0 | + Mephisto Phoenix chess computer support (cable-side checksum auto-detect) |
 | v4.0 | + ManyaCynus robot support (castling, en passant, promotion) |
-| v5.0 (current) | + [Standalone mode](#standalone-mode-no-cable-computer-required): BLE-to-BLE ChessLink/Chessnut masquerade, no cable chess computer required |
+| v5.0 | + [Standalone mode](#standalone-mode-no-cable-computer-required): BLE-to-BLE ChessLink/Chessnut masquerade, no cable chess computer required |
+| v5.1 (current) | Fix: Chessnut+Mephisto Phoenix status checksum (single-square changes and captures could silently fail to register); standalone mode now recovers automatically if a cable module boots slowly instead of needing a power cycle |
 
 ## Components
 
