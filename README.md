@@ -147,6 +147,54 @@ checksum convention (plain 7-bit vs. odd-parity-encoded) from its first
 frame and matches it in its own replies, so no build-time module selection
 is needed here either.
 
+## Automatic PGN recording (in development)
+
+The gateway can automatically record every game played on the connected
+e-board as a PGN file. Recording taps directly into the same board-status
+stream every other part of the gateway already uses, so it works in every
+supported configuration:
+
+- Cable-connected chess computer (Phoenix/King) with any e-board
+- [Standalone mode](#standalone-mode-no-cable-computer-required) (ChessLink/Chessnut masquerade)
+- Plain human-vs-human over-the-board play, with nothing else connected at all
+
+### How it works
+
+The gateway runs its own self-contained chess rules engine (legal move
+generation, check/checkmate detection, standard SAN notation) purely from
+the sequence of board positions it observes -- no external engine, app or
+GUI is required for recording itself.
+
+A game is saved automatically when:
+
+- **Checkmate** is detected -- result recorded as `1-0` or `0-1`.
+- The standard **starting position** is recognized again, meaning a new
+  game has begun. The just-finished game is saved with result `*`, unless
+  it was fewer than 10 full moves long, in which case it's discarded
+  instead (almost always a setup/test, not a real game).
+
+A manual result signal is also available mid-game: place both kings on one
+of three square pairs (a deliberate gesture, not a legal move):
+
+| Kings on | Result |
+|---|---|
+| d5 and e4 | White wins (`1-0`) |
+| d4 and e5 | Black wins (`0-1`) |
+| d4 and d5, or e4 and e5 | Draw (`1/2-1/2`) |
+
+It doesn't matter which specific king sits on which square within a pair --
+only that the two kings together occupy exactly that pair. Manually-signaled
+and checkmate results are always saved regardless of game length.
+
+The 10 most recently saved games are kept; the oldest is deleted
+automatically once an 11th is saved.
+
+### Retrieving saved games
+
+Not yet finalized -- the retrieval mechanism (how saved PGN files get off
+the gateway and onto a PC) is still under development. This section will be
+updated once that's decided.
+
 ## Web installer
 
 Flash the gateway firmware directly from a supported browser (Chrome or
@@ -308,11 +356,13 @@ get in touch: dsommerfeld@mac.com
 ## Trademark, copyright and protocol notice
 
 BluetoothMax is an independent, unofficial interoperability project. It is not
-affiliated with, endorsed by or sponsored by MILLENNIUM 2000 GmbH or any other
-vendor named in this document.
+affiliated with, endorsed by or sponsored by MILLENNIUM 2000 GmbH, Phoenix
+Chess Systems, or any other vendor named in this document.
 
-MILLENNIUM, ChessLink, Chessnut, ManyaCynus and related product names, trademarks,
-documentation and protocol specifications remain the property of their
-respective rights holders. This project does not claim ownership of any of
-these protocols and does not distribute original firmware, software or other
-copyrighted material from any vendor.
+MILLENNIUM, ChessLink, Chessnut, ManyaCynus, Mephisto Phoenix and related
+product names, trademarks, documentation and protocol specifications remain
+the property of their respective rights holders -- Mephisto Phoenix is a
+product of Phoenix Chess Systems (Netherlands, phoenixcs.nl), developed in
+cooperation with MILLENNIUM 2000. This project does not claim ownership of
+any of these protocols and does not distribute original firmware, software
+or other copyrighted material from any vendor.
