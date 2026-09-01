@@ -1,6 +1,6 @@
 # BluetoothMax
 
-BluetoothMax is an independent open-source Bluetooth LE gateway for chess
+BluetoothMax is an independent source-available Bluetooth LE gateway for chess
 computer modules that speak the ChessLink (Mode B) protocol over a cable. It
 replaces the cable between the chess computer module and a Bluetooth-enabled
 e-board with a Bluetooth LE connection -- and, unlike a single-board bridge,
@@ -352,6 +352,13 @@ For a ready-to-flash build, see [Web installer](#web-installer) above.
 Board manufacturers who would like their board supported, and anyone who'd
 like a ready-built device but can't solder one themselves, are welcome to
 get in touch: dsommerfeld@mac.com
+
+## License
+
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). Any
+noncommercial use -- building it for yourself, hobby projects, research -- is
+permitted; commercial use and distribution are reserved to the copyright
+holder.
 
 ## Trademark, copyright and protocol notice
 
