@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v6.0 (automatic PGN game recording + USB retrieval)",
+  "version": "v6.1 (fix: king-gesture result signal lost if its squares were occupied)",
   "new_install_prompt_erase": true,
   "builds": [
     {

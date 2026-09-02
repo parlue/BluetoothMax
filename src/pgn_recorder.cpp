@@ -643,6 +643,51 @@ const char* detectKingGestureResult(const char board[64]) {
   return nullptr;
 }
 
+// True while the board looks like a king-gesture attempt that just hasn't
+// landed on a valid pair yet -- added 2026-09-02 after the user's own
+// real-hardware report: the four gesture squares (d4/d5/e4/e5) are often
+// NOT empty going in (whatever piece is standing there from the actual game
+// position has to be lifted off before a king can be placed), and one king
+// typically arrives before the other. Both of those intermediate states are
+// neither the finished gesture (detectKingGestureResult() above) nor a
+// legal move (inferMove() would reject them), so without this check they
+// fell into the generic "unrecognized board change" path -- which, after a
+// few such intermediate snapshots or 20s, gives up and finalizes/discards
+// the game via finalizeGame("*") entirely, well before the player finished
+// placing both kings. User's own words: "da gilt die letzte Stellung" (the
+// last position should still count there) -- i.e. this needs unlimited
+// patience, not the bounded budget meant for genuine desync recovery.
+// Two independent signals, either one is enough:
+//   (a) a king now sits on a gesture square where it wasn't in the last
+//       recorded position (one king has already arrived, the other hasn't
+//       moved yet -- its own origin square differs too, but that's fine,
+//       this signal doesn't require every diff to be a gesture square);
+//   (b) every square that differs from the last recorded position is one of
+//       the four gesture squares (covers lifting the current occupant off a
+//       target square before any king has moved there yet).
+bool isKingGestureInProgress(const char board[64], const char lastRecorded[64]) {
+  const int d4 = boardSquareIndex('d', 4), d5 = boardSquareIndex('d', 5);
+  const int e4 = boardSquareIndex('e', 4), e5 = boardSquareIndex('e', 5);
+  const int gestureSquares[4] = {d4, d5, e4, e5};
+  auto isGestureSquare = [&](int sq) {
+    return sq == d4 || sq == d5 || sq == e4 || sq == e5;
+  };
+
+  for (int sq : gestureSquares) {
+    const bool isKingNow = board[sq] == 'K' || board[sq] == 'k';
+    if (isKingNow && board[sq] != lastRecorded[sq]) return true;  // (a)
+  }
+
+  bool anyDiff = false;
+  for (int sq = 0; sq < 64; ++sq) {
+    if (board[sq] != lastRecorded[sq]) {
+      anyDiff = true;
+      if (!isGestureSquare(sq)) return false;
+    }
+  }
+  return anyDiff;  // (b), or no diff at all (not our concern either way)
+}
+
 void appendMoveText(bool whiteMoved, int moveNumber, const char* san) {
   size_t pos = pgnMovesLen;
   const size_t remaining = kPgnBufferSize - pos;
@@ -707,6 +752,16 @@ void processSettledBoard(const uint8_t frame[kModeBStatusFrameLength]) {
     Serial.printf("[PGN] king-gesture result signal: %s\r\n", gestureResult);
     finalizeGame(gestureResult);
     recorderState = RecorderState::WaitingForStart;
+    return;
+  }
+
+  if (isKingGestureInProgress(board, game.board)) {
+    // See isKingGestureInProgress()'s own comment: don't touch `game` or
+    // consecutiveUnrecognized at all here -- an in-progress gesture must get
+    // unlimited patience, not the bounded budget below meant for genuine
+    // desync recovery.
+    Serial.println("[PGN] king-gesture squares being adjusted -- waiting for the gesture to "
+                    "complete");
     return;
   }
 

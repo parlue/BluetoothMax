@@ -247,7 +247,8 @@ client compatibility list.
 | v5.0 | + [Standalone mode](#standalone-mode-no-cable-computer-required): BLE-to-BLE ChessLink/Chessnut masquerade, no cable chess computer required |
 | v5.1 | Fix: Chessnut+Mephisto Phoenix status checksum (single-square changes and captures could silently fail to register); standalone mode now recovers automatically if a cable module boots slowly instead of needing a power cycle |
 | v5.2 | Fix: BearChess's ChessLink move-suggestion LEDs (a ghost-square filter built for Mephisto Phoenix's own reset splash was wrongly eating small real move suggestions from BearChess) |
-| v6.0 (current) | + [Automatic PGN game recording](#automatic-pgn-recording) with USB retrieval (queen-gesture trigger, standalone Windows tool, delete-on-confirmed-transfer) |
+| v6.0 | + [Automatic PGN game recording](#automatic-pgn-recording) with USB retrieval (queen-gesture trigger, standalone Windows tool, delete-on-confirmed-transfer) |
+| v6.1 (current) | Fix: the manual king-gesture result signal could be lost entirely if its target squares (d4/d5/e4/e5) were occupied by other pieces or the two kings didn't arrive together -- those in-progress states now get unlimited patience instead of counting against (and potentially triggering) the desync-recovery timeout |
 
 ## Components
 
