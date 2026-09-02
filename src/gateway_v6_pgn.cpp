@@ -1,15 +1,36 @@
+// Frozen v6 snapshot of the multi-board gateway (main.cpp and friends),
+// taken once automatic PGN game recording plus its USB retrieval path were
+// both confirmed working end-to-end on real hardware: every game played
+// (cable-connected Phoenix/King, BT-BT standalone masquerade, or plain
+// over-the-board human play) is recorded as PGN via the gateway's own
+// self-contained chess rules engine, kept in a 20-slot round-robin on
+// LittleFS, and retrievable onto a PC via a standalone Windows tool
+// (`tools/usb_pgn_client`) triggered by a physical "queen gesture" (standard
+// starting position plus a spare white queen on c4) -- the gateway dumps
+// every saved game over the native USB-CDC serial link, and once the client
+// confirms every file saved with the correct byte count, the gateway
+// deletes exactly those games from its own storage (never unprompted -- a
+// dump that never reaches a client, or a partial transfer, leaves every
+// game in place for the next attempt). Built by the
+// `esp32-c3-superminiV6_PGN` PlatformIO environment and never touched by any
+// later work -- flash this to fall back to this exact, already-proven
+// behavior. Self-contained: uses only the _v6 copies of board_driver/
+// millennium_board/chessnut_board/cynus_board/chesslink_server/
+// chessnut_server/pgn_recorder/usb_pgn_dump, never the live (non-_v6) ones,
+// so ongoing work can never affect this build.
+
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 
 #include <algorithm>
 
-#include "board_driver.h"
-#include "chesslink_server.h"
-#include "chessnut_board.h"
-#include "chessnut_server.h"
-#include "cynus_board.h"
-#include "millennium_board.h"
-#include "pgn_recorder.h"
+#include "board_driver_v6.h"
+#include "chesslink_server_v6.h"
+#include "chessnut_board_v6.h"
+#include "chessnut_server_v6.h"
+#include "cynus_board_v6.h"
+#include "millennium_board_v6.h"
+#include "pgn_recorder_v6.h"
 
 namespace {
 

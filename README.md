@@ -147,7 +147,7 @@ checksum convention (plain 7-bit vs. odd-parity-encoded) from its first
 frame and matches it in its own replies, so no build-time module selection
 is needed here either.
 
-## Automatic PGN recording (in development)
+## Automatic PGN recording
 
 The gateway can automatically record every game played on the connected
 e-board as a PGN file. Recording taps directly into the same board-status
@@ -186,14 +186,28 @@ It doesn't matter which specific king sits on which square within a pair --
 only that the two kings together occupy exactly that pair. Manually-signaled
 and checkmate results are always saved regardless of game length.
 
-The 10 most recently saved games are kept; the oldest is deleted
-automatically once an 11th is saved.
+The 20 most recently saved games are kept in a round-robin, oldest slot
+overwritten first once all 20 are in use -- except a game is removed sooner,
+right after [retrieval](#retrieving-saved-games) below has confirmed it was
+copied off the gateway successfully.
 
 ### Retrieving saved games
 
-Not yet finalized -- the retrieval mechanism (how saved PGN files get off
-the gateway and onto a PC) is still under development. This section will be
-updated once that's decided.
+Trigger a **"queen gesture"**: set up the standard starting position with
+one extra white queen placed on c4 (every one of these e-boards' piece sets
+includes a spare queen for promotion anyway) -- the corner squares light up
+to confirm it was recognized. Every saved game is then dumped over the
+gateway's native USB-CDC connection to a PC, where a small standalone
+Windows tool saves each one as its own `.pgn` file. Once the tool confirms
+every game saved correctly, the gateway deletes exactly those games from its
+own storage -- a dump that never reaches the tool, or a partial transfer,
+leaves every game in place for the next attempt.
+
+See [`pgntool/`](pgntool) for the tool itself and full usage instructions.
+This is a second, independent retrieval path (built because the BLE-based
+retrieval via Chess PGN Master turned out to be blocked on an undocumented
+step in Chessnut's own closed-source SDK) -- both ends of its protocol are
+defined by this project, so there's nothing to reverse-engineer.
 
 ## Web installer
 
@@ -232,7 +246,8 @@ client compatibility list.
 | v4.0 | + ManyaCynus robot support (castling, en passant, promotion) |
 | v5.0 | + [Standalone mode](#standalone-mode-no-cable-computer-required): BLE-to-BLE ChessLink/Chessnut masquerade, no cable chess computer required |
 | v5.1 | Fix: Chessnut+Mephisto Phoenix status checksum (single-square changes and captures could silently fail to register); standalone mode now recovers automatically if a cable module boots slowly instead of needing a power cycle |
-| v5.2 (current) | Fix: BearChess's ChessLink move-suggestion LEDs (a ghost-square filter built for Mephisto Phoenix's own reset splash was wrongly eating small real move suggestions from BearChess) |
+| v5.2 | Fix: BearChess's ChessLink move-suggestion LEDs (a ghost-square filter built for Mephisto Phoenix's own reset splash was wrongly eating small real move suggestions from BearChess) |
+| v6.0 (current) | + [Automatic PGN game recording](#automatic-pgn-recording) with USB retrieval (queen-gesture trigger, standalone Windows tool, delete-on-confirmed-transfer) |
 
 ## Components
 

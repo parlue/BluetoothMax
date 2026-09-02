@@ -1,4 +1,4 @@
-#include "chessnut_server.h"
+#include "chessnut_server_v6.h"
 
 #include <LittleFS.h>
 #include <NimBLEDevice.h>
@@ -6,9 +6,9 @@
 #include <algorithm>
 #include <cstring>
 
-#include "chessnut_board.h"
-#include "millennium_board.h"
-#include "pgn_recorder.h"
+#include "chessnut_board_v6.h"
+#include "millennium_board_v6.h"
+#include "pgn_recorder_v6.h"
 
 // Ported from gkalab/cer2nut (https://github.com/gkalab/cer2nut, read
 // directly as ground truth) -- an open-source bridge that masks a Certabo

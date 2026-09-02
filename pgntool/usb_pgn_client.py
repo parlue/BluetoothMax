@@ -23,6 +23,17 @@ log already uses -- other lines are simply ignored):
     ###PGN_FILE_END###
     ... (repeated for each saved game, index 0..N-1)
     ###PGN_USB_DUMP_END###
+
+If, and only if, every one of the N games above was saved with its exact
+expected byte count (no framing errors), this client writes one line back:
+
+    ###PGN_USB_DUMP_ACK###
+
+which tells the gateway it's safe to delete those N games from its own
+storage (added 2026-09-02, per the user's own plan -- previously the
+gateway never deleted anything and games only wrapped around after 20 new
+ones). A partial/failed transfer sends no ack at all, so the gateway's own
+timeout just leaves everything in place for the next attempt.
 """
 
 import contextlib
@@ -78,6 +89,19 @@ def next_game_number(directory):
         if match:
             highest = max(highest, int(match.group(1)))
     return highest + 1
+
+
+def count_saved_pgns(directory):
+    """Total game<N>.pgn files actually present in `directory` right now --
+    user's own request 2026-09-02: show this on exit as a quick "how many
+    games have I collected here so far" summary, not just this session's own
+    save count. Counts real files (not next_game_number()'s highest-N-plus-1,
+    which would be wrong if a file were ever manually removed)."""
+    count = 0
+    for path in glob.glob(os.path.join(directory, "game*.pgn")):
+        if re.fullmatch(r"game(\d+)\.pgn", os.path.basename(path)):
+            count += 1
+    return count
 
 
 @contextlib.contextmanager
@@ -172,16 +196,36 @@ def save_game(directory, content_bytes):
     return path
 
 
-def process_dump(ser, directory):
+def process_dump(ser, directory, expected_count):
     """Called once a ###PGN_USB_DUMP_BEGIN...### line has already been
     seen -- reads and saves each file until the matching END marker.
-    Returns the number of games actually saved."""
+    Returns the number of games actually saved.
+
+    Sends the ###PGN_USB_DUMP_ACK### line back (see this module's own
+    docstring) only if every single expected game was saved cleanly --
+    `saved` only ever increments on a byte-exact file, so `saved ==
+    expected_count` alone is sufficient proof nothing was dropped."""
     saved = 0
     while True:
         line = read_line(ser)
         if not line:
             continue
         if line == b"###PGN_USB_DUMP_END###":
+            if expected_count > 0 and saved == expected_count:
+                try:
+                    ser.write(b"###PGN_USB_DUMP_ACK###\r\n")
+                    logging.info(
+                        "acknowledged transfer -- gateway will delete these games from its own storage"
+                    )
+                except (serial.SerialException, OSError) as exc:
+                    logging.warning(
+                        "could not send delete-ack (%s) -- games stay on the gateway", exc
+                    )
+            elif expected_count > 0:
+                logging.warning(
+                    "only %d of %d game(s) saved cleanly -- not acknowledging, "
+                    "games stay on the gateway for a retry", saved, expected_count
+                )
             return saved
         match = FILE_BEGIN_RE.fullmatch(line)
         if not match:
@@ -248,12 +292,14 @@ def wait_for_one_dump(port, directory):
                 continue
             match = DUMP_BEGIN_RE.fullmatch(line)
             if match:
-                logging.info("dump starting, %s game(s) expected", match.group(1).decode())
-                return process_dump(ser, directory)
+                expected_count = int(match.group(1))
+                logging.info("dump starting, %d game(s) expected", expected_count)
+                return process_dump(ser, directory, expected_count)
 
 
 def main():
     setup_logging()
+    logging.info("BluetoothMax PGN Tool by Dirk D. Sommerfeld")
     directory = script_dir()
     logging.info("saving games into: %s", directory)
     while True:
@@ -275,11 +321,12 @@ def main():
         if saved > 0:
             logging.info("done -- %d game(s) saved", saved)
         else:
-            # Real, expected case (not an error) once games get deleted
-            # from the gateway's own storage after a successful download --
-            # the user's own future plan, not yet implemented as of this
-            # writing (still explicitly NOT deleting anything server-side).
+            # Real, expected case (not an error): the gateway now deletes a
+            # game from its own storage once this client confirms it saved
+            # cleanly (see process_dump()'s ack), so an empty dump just means
+            # everything was already collected on a previous run.
             logging.info("done -- no games were stored on the gateway")
+        logging.info("total games in this folder: %d", count_saved_pgns(directory))
         return
 
 

@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v5.2 (fix: BearChess ChessLink LED move-suggestion decode)",
+  "version": "v6.0 (automatic PGN game recording + USB retrieval)",
   "new_install_prompt_erase": true,
   "builds": [
     {
