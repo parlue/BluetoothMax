@@ -3,38 +3,74 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>BluetoothMax Web Installer</title>
-  <meta name="description" content="Install BluetoothMax on an ESP32-C3 directly from your browser.">
+  <title>BluetoothMax</title>
+  <meta name="description" content="BluetoothMax is a Bluetooth LE gateway for ChessLink chess computer modules -- multi-board support, standalone mode, automatic PGN recording, and a browser-based installer.">
   <script type="module"
           src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module">
   </script>
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      max-width: 680px;
+      max-width: 720px;
       margin: 0 auto;
-      padding: 48px 24px;
+      padding: 48px 24px 64px;
       line-height: 1.6;
+      color: #1a1a1a;
     }
-    h1 { margin-bottom: 0.25rem; }
-    .sub { opacity: 0.7; margin-top: 0; }
+    h1 { margin-bottom: 0.25rem; font-size: 2rem; }
+    .sub { opacity: 0.7; margin-top: 0; font-size: 1.05rem; }
+    .photos {
+      display: flex;
+      gap: 12px;
+      margin: 28px 0;
+      flex-wrap: wrap;
+    }
+    .photos img {
+      width: calc(50% - 6px);
+      min-width: 220px;
+      flex: 1;
+      border-radius: 10px;
+      object-fit: cover;
+    }
     .installer {
       margin: 32px 0;
       padding: 24px;
       border: 1px solid #ccc;
       border-radius: 12px;
+      background: #fafafa;
     }
+    ul.features { padding-left: 1.2rem; }
+    ul.features li { margin-bottom: 0.5rem; }
     code { font-size: 0.95em; }
+    .links { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; }
+    .links a { margin-right: 16px; }
   </style>
 </head>
 <body>
   <h1>BluetoothMax</h1>
-  <p class="sub">ESP32-C3 Web Installer &middot; Multi-board ChessLink/Chessnut/ManyaCynus BLE gateway, with a standalone wireless-only mode</p>
+  <p class="sub">Bluetooth LE gateway for ChessLink chess computer modules -- multi-board, standalone mode, automatic PGN recording</p>
+
+  <div class="photos">
+    <img src="images/module-usb-c.jpg" alt="BluetoothMax module, USB-C side">
+    <img src="images/module-minidin.jpg" alt="BluetoothMax module, Mini-DIN cable side">
+  </div>
 
   <p>
-    Connect your ESP32-C3 SuperMini compatible board via USB and install
-    BluetoothMax directly from a supported browser.
+    BluetoothMax bridges a cable-connected chess computer module (MILLENNIUM
+    King, Mephisto Phoenix) to any of several wireless e-boards over
+    Bluetooth LE -- one firmware, automatic board detection at runtime. With
+    no cable computer present, the gateway can also masquerade as a
+    ChessLink or Chessnut board itself, so wireless chess software can
+    connect directly.
   </p>
+
+  <ul class="features">
+    <li>Supported e-boards: MILLENNIUM Supreme T2 BT, Chessnut Air/GO/Pro, ManyaCynus camera-vision robot (including castling, en passant, promotion)</li>
+    <li><strong>Standalone mode</strong>: no cable computer needed -- the gateway advertises itself as a ChessLink or Chessnut board over BLE for wireless chess software (PicoChess, BearChess, Chess PGN Master)</li>
+    <li><strong>Automatic PGN game recording</strong>, including checkmate detection and a manual result-signal gesture</li>
+    <li><strong>USB game retrieval</strong> via a simple physical gesture and a standalone Windows tool</li>
+    <li>Flash directly from your browser -- no toolchain required (below)</li>
+  </ul>
 
   <div class="installer">
     <esp-web-install-button manifest="manifest.json">
@@ -52,5 +88,10 @@
   </ol>
 
   <p><strong>Target:</strong> ESP32-C3 SuperMini compatible boards</p>
+
+  <div class="links">
+    <a href="https://github.com/parlue/BluetoothMax">Full documentation &amp; source (GitHub)</a>
+    <a href="https://github.com/parlue/BluetoothMax/tree/main/pgntool">PGN retrieval tool</a>
+  </div>
 </body>
 </html>
