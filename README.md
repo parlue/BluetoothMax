@@ -25,6 +25,11 @@ Generic chess computer module with DIN connector
 MILLENNIUM Supreme T2 BT -- or -- Chessnut Air/GO/Pro -- or -- ManyaCynus robot
 ```
 
+<p>
+  <img src="images/module-usb-c.jpg" alt="BluetoothMax module, USB-C side" width="300">
+  <img src="images/module-minidin.jpg" alt="BluetoothMax module, Mini-DIN cable side" width="300">
+</p>
+
 ## Supported e-boards
 
 | Board | Status |
