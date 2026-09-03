@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v6.2 (Chess PGN Master BLE retrieval fixed, real deletion, iChessOne driver)",
+  "version": "v6.3 (king-gesture result confirmed on-board, Cynus manual reconnect-recovery override)",
   "new_install_prompt_erase": true,
   "builds": [
     {

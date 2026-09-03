@@ -354,6 +354,65 @@ void dispatchLedFrameToBoard(BoardType type, const uint8_t frame167[167]) {
   }
 }
 
+// Shows a 3-second confirmation signal after a king-gesture result
+// (win/loss/draw, see pgn_recorder.cpp's detectKingGestureResult()) has been
+// recognized -- user's own explicit request, 2026-09-03. LED boards
+// (Millennium, Chessnut, iChessOne) light the same four center squares
+// (d4/d5/e4/e5) main.cpp's own BT-BT "ready" signal already uses, with a
+// single steady write -- no repeated/timed toggling, matching this
+// project's own established "rapid repeated LED writes are fragile on real
+// hardware" findings elsewhere. Cynus has no LEDs, so it shows the result
+// as text instead. result must be one of detectKingGestureResult()'s own
+// return values ("1-0", "0-1", "1/2-1/2"). Call
+// clearKingGestureResultConfirmation() once the 3-second hold is over.
+void showKingGestureResultConfirmation(BoardType type, const char* result) {
+  const uint8_t centerSquares[4] = {
+      static_cast<uint8_t>(boardSquareIndex('d', 4)), static_cast<uint8_t>(boardSquareIndex('d', 5)),
+      static_cast<uint8_t>(boardSquareIndex('e', 4)), static_cast<uint8_t>(boardSquareIndex('e', 5)),
+  };
+  switch (type) {
+    case BoardType::Millennium: {
+      uint8_t frame167[167];
+      encodeLedFrame(centerSquares, 4, frame167, /*useEncodedChecksum=*/false);
+      millenniumRelayLedFrame(frame167, 167);
+      break;
+    }
+    case BoardType::Chessnut: {
+      SquareHighlight highlights[4];
+      for (int i = 0; i < 4; ++i) highlights[i] = {centerSquares[i], SquareHighlightRole::Generic};
+      chessnutSetHighlightedSquares(highlights, 4);
+      break;
+    }
+    case BoardType::IChessOne: {
+      SquareHighlight highlights[4];
+      for (int i = 0; i < 4; ++i) highlights[i] = {centerSquares[i], SquareHighlightRole::Generic};
+      ichessoneSetHighlightedSquares(highlights, 4);
+      break;
+    }
+    case BoardType::Cynus: {
+      // "1/2:1/2" (7 characters) confirmed by the user to fit the display,
+      // same as "1:0"/"0:1".
+      const char* text = (strcmp(result, "1-0") == 0)   ? "1:0"
+                          : (strcmp(result, "0-1") == 0) ? "0:1"
+                                                          : "1/2:1/2";
+      cynusShowText(text);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+void clearKingGestureResultConfirmation(BoardType type) {
+  switch (type) {
+    case BoardType::Millennium: millenniumClearLeds(); break;
+    case BoardType::Chessnut: chessnutSetHighlightedSquares(nullptr, 0); break;
+    case BoardType::IChessOne: ichessoneClearLeds(); break;
+    case BoardType::Cynus: cynusShowText("play"); break;
+    default: break;
+  }
+}
+
 void clearBoardLeds(BoardType type) {
   switch (type) {
     case BoardType::Millennium: millenniumClearLeds(); break;

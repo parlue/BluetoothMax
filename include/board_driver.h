@@ -247,6 +247,15 @@ void clearBoardLeds(BoardType type);
 // used by chesslink_server.cpp to know which driver to dispatch to.
 BoardType currentBoardType();
 
+// Shows/clears a 3-second confirmation signal after a manual king-gesture
+// result signal (win/loss/draw) is recognized -- see pgn_recorder.cpp's
+// detectKingGestureResult(). LED boards light the four center squares
+// (d4/d5/e4/e5) steadily; Cynus shows the result as text ("1:0"/"0:1"/
+// "1/2:1/2"). result must be one of detectKingGestureResult()'s own return
+// values. Implemented in board_driver.cpp.
+void showKingGestureResultConfirmation(BoardType type, const char* result);
+void clearKingGestureResultConfirmation(BoardType type);
+
 // The current auto-report interval (ms) King's status gets resent at if
 // unchanged; defaults to a generic fallback and may be refined by a driver
 // that can read its board's own real scan-rate (Millennium's register 1).

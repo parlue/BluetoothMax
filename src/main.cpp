@@ -735,8 +735,19 @@ void onBoardStatusFrame(const uint8_t frame[kModeBStatusFrameLength]) {
   // reliable local 'l' ack uses) -- for Chessnut, rely on that
   // synchronized path alone instead of also firing here, unsynchronized.
   // T2/Millennium (relayed byte-for-byte from a real board, already
-  // proven to work end-to-end) and Cynus are untouched.
-  if (activeHostTransport == HostTransport::Cable && activeBoardType != BoardType::Chessnut) {
+  // proven to work end-to-end) is untouched.
+  //
+  // Cynus excluded too, 2026-09-03: real-hardware test of the manual
+  // startup-override (publishing a full 64-square position to Phoenix
+  // right after a reconnect) showed Phoenix only ever picked up a handful
+  // of squares (e.g. 4 pawns) instead of the complete position -- the same
+  // unsynchronized-collision signature described above, just never hit
+  // hard enough to notice during ordinary single-move play (a garbled
+  // frame there gets silently corrected by the next real move a moment
+  // later; a one-shot full-board publish has no such second chance). Cynus
+  // now relies on the same synchronized 'L'-frame resend path as Chessnut.
+  if (activeHostTransport == HostTransport::Cable && activeBoardType != BoardType::Chessnut &&
+      activeBoardType != BoardType::Cynus) {
     const size_t written = writeFrameToKing(frame, kModeBStatusFrameLength);
     memcpy(lastStatusSentToKing, frame, kModeBStatusFrameLength);
     haveSentStatusToKing = true;
@@ -862,9 +873,13 @@ void loop() {
     // unsynchronized-collision risk the immediate-send skip above was
     // removed for. Chessnut status now reaches Phoenix exclusively via the
     // 'L'-frame handler's own cachedBoardStatus resend (synchronized to
-    // Phoenix's own reply-expecting slot). T2/Millennium and Cynus keep
-    // this heartbeat unchanged.
+    // Phoenix's own reply-expecting slot). T2/Millennium keeps this
+    // heartbeat unchanged; Cynus excluded too as of 2026-09-03, alongside
+    // the matching change in onBoardStatusFrame() above -- see that
+    // comment for the real-hardware symptom (partial position landing at
+    // Phoenix) that prompted it.
     if (activeHostTransport == HostTransport::Cable && activeBoardType != BoardType::Chessnut &&
+        activeBoardType != BoardType::Cynus &&
         haveCachedBoardStatus &&
         (!haveSentStatusToKing ||
          memcmp(lastStatusSentToKing, cachedBoardStatus, sizeof(cachedBoardStatus)) != 0 ||

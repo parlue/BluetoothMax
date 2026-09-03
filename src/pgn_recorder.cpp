@@ -498,6 +498,12 @@ GameState game;
 // queen sitting on c4.
 bool queenGestureActive = false;
 
+// King-gesture result confirmation hold (see showKingGestureResultConfirmation()
+// in board_driver.cpp) -- user's own explicit request, 2026-09-03.
+bool resultConfirmationActive = false;
+uint32_t resultConfirmationStartedMs = 0;
+constexpr uint32_t kResultConfirmationHoldMs = 3000;
+
 // Tolerate a run of unrecognized settled positions before giving up --
 // the very FIRST unrecognized snapshot after an illegal-move attempt IS
 // the illegal position itself (before the player has had any chance to
@@ -752,6 +758,9 @@ void processSettledBoard(const uint8_t frame[kModeBStatusFrameLength]) {
     Serial.printf("[PGN] king-gesture result signal: %s\r\n", gestureResult);
     finalizeGame(gestureResult);
     recorderState = RecorderState::WaitingForStart;
+    showKingGestureResultConfirmation(currentBoardType(), gestureResult);
+    resultConfirmationActive = true;
+    resultConfirmationStartedMs = millis();
     return;
   }
 
@@ -1151,6 +1160,12 @@ void pgnRecorderPoll() {
 
   usbPgnDumpBlinkPoll();
   usbPgnDumpPoll();
+
+  if (resultConfirmationActive &&
+      static_cast<uint32_t>(millis() - resultConfirmationStartedMs) >= kResultConfirmationHoldMs) {
+    clearKingGestureResultConfirmation(currentBoardType());
+    resultConfirmationActive = false;
+  }
 
   if (haveLatestFrame && !frameConsumed &&
       static_cast<uint32_t>(millis() - lastFrameChangeMs) >= kSettleMs) {

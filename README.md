@@ -78,6 +78,16 @@ the same robot that this gateway's ManyaCynus support is ported from.
   "E2-E4", "0-0" for castling), "POS OK" once the starting position is
   confirmed, and the specific offending square(s) (e.g. "+E4") when a scan
   doesn't settle into a legal position.
+- **Recovering from an unexpected reconnect**: if ManyaCynus loses its BLE
+  connection mid-game (e.g. it resets itself) and reconnects, the gateway
+  would normally insist on seeing the exact starting position again before
+  resuming, blocking the game in progress. Lifting both Kings off the board
+  at any point -- right after reconnecting, or even mid-game -- arms a
+  manual override instead: the display shows "newpos", automatic rescanning
+  stops, and the gateway waits (no time limit) for the desired position to
+  be rebuilt. Once both Kings are back on the board, press ManyaCynus's own
+  Clock/Scan button to submit that position as-is, no legality check --
+  exactly what a real chess computer's own "set up position" mode expects.
 
 ## Startup sequence
 
@@ -192,6 +202,11 @@ It doesn't matter which specific king sits on which square within a pair --
 only that the two kings together occupy exactly that pair. Manually-signaled
 and checkmate results are always saved regardless of game length.
 
+The board itself also confirms the result for 3 seconds once the gesture is
+recognized: LED boards (Millennium, Chessnut) light the same d4/d5/e4/e5
+squares steady (not blinking); ManyaCynus shows `1:0`, `0:1`, or `1/2:1/2`
+on its display.
+
 The 20 most recently saved games are kept in a round-robin, oldest slot
 overwritten first once all 20 are in use -- except a game is removed sooner,
 right after [retrieval](#retrieving-saved-games) below has confirmed it was
@@ -268,7 +283,8 @@ client compatibility list.
 | v5.2 | Fix: BearChess's ChessLink move-suggestion LEDs (a ghost-square filter built for Mephisto Phoenix's own reset splash was wrongly eating small real move suggestions from BearChess) |
 | v6.0 | + [Automatic PGN game recording](#automatic-pgn-recording) with USB retrieval (queen-gesture trigger, standalone Windows tool, delete-on-confirmed-transfer) |
 | v6.1 | Fix: the manual king-gesture result signal could be lost entirely if its target squares (d4/d5/e4/e5) were occupied by other pieces or the two kings didn't arrive together -- those in-progress states now get unlimited patience instead of counting against (and potentially triggering) the desync-recovery timeout |
-| v6.2 (current) | Chess PGN Master's BLE game download now actually works (sends raw board-status frames instead of pre-built text, matching what the real EasyLinkSDK's read thread expects) and properly deletes each game from the gateway after a successful pickup; + initial (real-hardware-untested) iChessOne board driver |
+| v6.2 | Chess PGN Master's BLE game download now actually works (sends raw board-status frames instead of pre-built text, matching what the real EasyLinkSDK's read thread expects) and properly deletes each game from the gateway after a successful pickup; + initial (real-hardware-untested) iChessOne board driver |
+| v6.3 (current) | Manual king-gesture game results are now also confirmed on the board itself (3s LED/display signal); + ManyaCynus manual position override to recover from an unexpected mid-game BLE reconnect without losing the game |
 
 ## Components
 

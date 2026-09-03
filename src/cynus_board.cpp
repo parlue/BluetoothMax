@@ -124,6 +124,28 @@ uint32_t nextStartupRescanAt = 0;
 // lastStartupErrorDisplay dedup.
 std::string lastStartupErrorDisplay;
 
+// Manual override: lifting BOTH kings off the board while stuck at startup
+// is a physical signal the player wants the position they set up next
+// accepted as-is, bypassing the "must match a valid start position" check --
+// user's own design, 2026-09-03 (real scenario: Cynus reset itself mid-game
+// against Phoenix, forcing a BLE reconnect; startup logic then correctly
+// refused the actual mid-game position, blocking play entirely). Replaces an
+// earlier "3+ scans within 5s" attempt that turned out to be untriggerable:
+// live testing showed the physical Scan/Clock button doesn't produce an
+// independent BLE event outside Set Position mode, so no repeated-scan
+// signal was ever actually observable. Both-kings-removed can't happen by
+// accident during ordinary setup fumbling, so it's a safe, deliberate
+// trigger -- armed once, then the next scan with both kings present again
+// is accepted as the position to resume from.
+bool startupManualOverrideArmed = false;
+
+bool hasNoKings(const char board[65]) {
+  for (int i = 0; i < 64; ++i) {
+    if (board[i] == 'K' || board[i] == 'k') return false;
+  }
+  return true;
+}
+
 // 0 = not pending; set right after connect, consumed by cynusPoll() to send
 // the first "scan board" once kInitialScanDelayMs has passed.
 uint32_t initialScanAt = 0;
@@ -598,28 +620,10 @@ bool handleOptionBoard(const char scanned[65]) {
 // or flipped starting position, then tell Cynus which orientation it's
 // seeing so its own firmware corrects for it -- ported from CynusLink,
 // which confirmed this against real hardware.
-void handleStartupBoard(const char scanned[65]) {
-  char normal[65], flipped[65];
-  if (!fenPlacementToBoard(kStartFen, normal) || !fenPlacementToBoard(kFlippedStartFen, flipped)) return;
-  if (boardsEqual(scanned, normal)) {
-    sendCynus("set flip board off\n");
-    Serial.println("[CYNUS] startup position OK (normal orientation)");
-  } else if (boardsEqual(scanned, flipped)) {
-    sendCynus("set flip board on\n");
-    Serial.println("[CYNUS] startup position OK (flipped orientation)");
-  } else {
-    Serial.println("[CYNUS] startup position not yet a valid start position; "
-                    "automatic rescan in 5 seconds");
-    const std::string errorText = startupErrorDisplay(scanned);
-    if (!errorText.empty() && errorText != lastStartupErrorDisplay) {
-      lastStartupErrorDisplay = errorText;
-      cynusDisplay(errorText);
-      sendCynus("play audio error\n");
-      Serial.printf("[CYNUS] startup position error display: %s (error audio)\r\n", errorText.c_str());
-    }
-    nextStartupRescanAt = millis() + kStartupCorrectionRescanMs;
-    return;
-  }
+// Shared by handleStartupBoard() and the mid-game override branch in
+// handleFenLine(): commits scanned as the new confirmed position and
+// resumes normal play from it.
+void acceptScannedPosition(const char scanned[65]) {
   nextStartupRescanAt = 0;
   lastStartupErrorDisplay.clear();
   memcpy(board64, scanned, sizeof(board64));
@@ -629,6 +633,77 @@ void handleStartupBoard(const char scanned[65]) {
   setMoveCycle(MoveCycle::WaitFirstMove);
   cynusDisplay("POS OK");
   publishStatus();
+}
+
+// Manual override state machine, shared between handleStartupBoard() (right
+// after a reconnect) and handleFenLine()'s mid-game path -- extended
+// 2026-09-03 to work at any point during play, not just right after
+// connecting (user's own follow-up request: "das wäre gut"). Returns true
+// if scanned was consumed by the override (armed, still waiting, or
+// accepted) -- caller should stop processing this fen either way.
+bool handleManualOverrideScan(const char scanned[65]) {
+  if (startupManualOverrideArmed) {
+    if (hasBothKings(scanned)) {
+      Serial.println("[CYNUS] manual override: kings restored -- accepting current position as-is "
+                      "(e.g. after an unexpected mid-game reconnect)");
+      startupManualOverrideArmed = false;
+      acceptScannedPosition(scanned);
+      return true;
+    }
+    Serial.println("[CYNUS] manual override: scanned position still missing a king -- waiting "
+                    "for the next Clock/Scan button press");
+    nextStartupRescanAt = 0;
+    return true;
+  }
+  if (hasNoKings(scanned)) {
+    startupManualOverrideArmed = true;
+    // Stop the automatic 5s rescan entirely -- same trick Set Position mode
+    // already relies on (see handleSetPositionFen()/the "promotions:"
+    // comment above): since WE never ask for a scan again from here on, the
+    // only way a new fen can possibly arrive is a spontaneous push from
+    // Cynus itself, i.e. the player pressing its own physical Clock/Scan
+    // button once the desired position is fully set up. This also fixes the
+    // premature-accept bug the timer caused: with polling left running, an
+    // auto-rescan could catch the board mid-setup (e.g. kings placed back
+    // first) and accept an incomplete position.
+    Serial.println("[CYNUS] manual override armed: both kings removed -- automatic rescanning "
+                    "stopped; set up the desired position, then press Cynus's own Clock/Scan "
+                    "button to submit it");
+    cynusDisplay("newpos");
+    nextStartupRescanAt = 0;
+    return true;
+  }
+  return false;
+}
+
+void handleStartupBoard(const char scanned[65]) {
+  char normal[65], flipped[65];
+  if (!fenPlacementToBoard(kStartFen, normal) || !fenPlacementToBoard(kFlippedStartFen, flipped)) return;
+
+  if (boardsEqual(scanned, normal)) {
+    sendCynus("set flip board off\n");
+    Serial.println("[CYNUS] startup position OK (normal orientation)");
+    acceptScannedPosition(scanned);
+    return;
+  }
+  if (boardsEqual(scanned, flipped)) {
+    sendCynus("set flip board on\n");
+    Serial.println("[CYNUS] startup position OK (flipped orientation)");
+    acceptScannedPosition(scanned);
+    return;
+  }
+  if (handleManualOverrideScan(scanned)) return;
+
+  Serial.println("[CYNUS] startup position not yet a valid start position; "
+                  "automatic rescan in 5 seconds");
+  const std::string errorText = startupErrorDisplay(scanned);
+  if (!errorText.empty() && errorText != lastStartupErrorDisplay) {
+    lastStartupErrorDisplay = errorText;
+    cynusDisplay(errorText);
+    sendCynus("play audio error\n");
+    Serial.printf("[CYNUS] startup position error display: %s (error audio)\r\n", errorText.c_str());
+  }
+  nextStartupRescanAt = millis() + kStartupCorrectionRescanMs;
 }
 
 // Locks which side King/Phoenix is playing, the first time either side
@@ -1093,6 +1168,15 @@ void handleFenLine(const std::string& fen) {
     return;
   }
 
+  // Same manual override as handleStartupBoard(), now also usable mid-game
+  // (2026-09-03 follow-up request): both kings lifted at any point arms it,
+  // exactly like right after a reconnect. Checked ahead of every other
+  // in-game branch since kings vanishing is never a legal move or a
+  // recognized option-board gesture -- left unchecked, it would otherwise
+  // just fall through to the one-legal-move gate below and get rejected as
+  // a bad scan.
+  if (handleManualOverrideScan(scanned)) return;
+
   if (moveCycle == MoveCycle::WaitRobotPosition) {
     // Cynus's arm just finished executing the move we sent; this fen is its
     // own confirmation, not a new human move -- accept directly, no
@@ -1311,6 +1395,7 @@ void resetConnectionState() {
   lastSentMoveUci.clear();
   nextStartupRescanAt = 0;
   initialScanAt = 0;
+  startupManualOverrideArmed = false;
   clearPendingLedMove(nullptr);
   alternatingSquareA = -1;
   alternatingSquareB = -1;
