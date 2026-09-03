@@ -57,6 +57,13 @@ the same robot that this gateway's ManyaCynus support is ported from.
 - **Startup**: the scanned position is checked against the normal and
   mirrored starting position before anything else; an incorrect setup is
   rescanned automatically every 5 seconds until it matches.
+- **Illegal-move check disabled automatically (firmware 1.4.2+ only)**: on
+  every connect, the gateway asks Cynus for its app version and, if it's
+  1.4.2 or newer, sends `set illegal move check off` -- Cynus's own
+  onboard legality checking otherwise fights the gateway whenever an
+  external chess computer (not Cynus's own built-in engine) is actually
+  driving the game. Units on older firmware are left untouched; update
+  Cynus's own firmware to get this.
 - **Options via the black King**: with the board in its starting position,
   moving only the black King onto one of the following squares toggles a
   setting instead of being treated as a move -- move it back to its home
@@ -287,7 +294,8 @@ client compatibility list.
 | v6.0 | + [Automatic PGN game recording](#automatic-pgn-recording) with USB retrieval (queen-gesture trigger, standalone Windows tool, delete-on-confirmed-transfer) |
 | v6.1 | Fix: the manual king-gesture result signal could be lost entirely if its target squares (d4/d5/e4/e5) were occupied by other pieces or the two kings didn't arrive together -- those in-progress states now get unlimited patience instead of counting against (and potentially triggering) the desync-recovery timeout |
 | v6.2 | Chess PGN Master's BLE game download now actually works (sends raw board-status frames instead of pre-built text, matching what the real EasyLinkSDK's read thread expects) and properly deletes each game from the gateway after a successful pickup; + initial (real-hardware-untested) iChessOne board driver |
-| v6.3 (current) | Manual king-gesture game results are now also confirmed on the board itself (3s LED/display signal); + ManyaCynus manual position override to recover from an unexpected mid-game BLE reconnect without losing the game |
+| v6.3 | Manual king-gesture game results are now also confirmed on the board itself (3s LED/display signal); + ManyaCynus manual position override to recover from an unexpected mid-game BLE reconnect without losing the game |
+| v6.4 (current) | ManyaCynus: on firmware 1.4.2+, the gateway now auto-detects the version and disables Cynus's own onboard illegal-move checking, which previously could interfere with an external chess computer driving the game |
 
 ## Components
 

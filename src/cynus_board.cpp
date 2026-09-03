@@ -1300,8 +1300,48 @@ bool equalsIgnoreCase(const std::string& a, const char* b) {
   return i == a.size() && b[i] == '\0';
 }
 
+// Parses Cynus's own "get software version" reply -- confirmed on real
+// hardware 2026-09-03: "App version: V1.4.2" (major.minor.patch after the
+// "V"). Returns false if the line doesn't match this exact format.
+bool parseCynusAppVersion(const std::string& line, int& major, int& minor, int& patch) {
+  const char* kPrefix = "App version: V";
+  const size_t prefixLen = strlen(kPrefix);
+  if (line.rfind(kPrefix, 0) != 0) return false;
+  const char* p = line.c_str() + prefixLen;
+  char* end = nullptr;
+  major = static_cast<int>(strtol(p, &end, 10));
+  if (end == p || *end != '.') return false;
+  p = end + 1;
+  minor = static_cast<int>(strtol(p, &end, 10));
+  if (end == p || *end != '.') return false;
+  p = end + 1;
+  patch = static_cast<int>(strtol(p, &end, 10));
+  if (end == p) return false;
+  return true;
+}
+
 void handleLine(const std::string& line) {
   Serial.printf("[CYNUS LINE] %s\n", line.c_str());
+  {
+    int major = 0, minor = 0, patch = 0;
+    if (parseCynusAppVersion(line, major, minor, patch)) {
+      // User's own feature request to the manufacturer: without this,
+      // Cynus's own internal move-legality checking fights the gateway
+      // whenever WE (not Cynus's own onboard engine) are driving the game
+      // over BLE. Only send the toggle to a unit confirmed to understand
+      // it -- an older unit's reaction to an unknown command is untested.
+      const bool supportsIllegalMoveCheckToggle =
+          (major > 1) || (major == 1 && minor > 4) || (major == 1 && minor == 4 && patch >= 2);
+      Serial.printf("[CYNUS] app version %d.%d.%d%s\r\n", major, minor, patch,
+                    supportsIllegalMoveCheckToggle
+                        ? " (illegal-move-check toggle supported)"
+                        : " (illegal-move-check toggle NOT supported -- need >= 1.4.2)");
+      if (supportsIllegalMoveCheckToggle) {
+        sendCynus("set illegal move check off\n");
+      }
+      return;
+    }
+  }
   if (line.rfind("fen:", 0) == 0) {
     std::string fen = line.substr(4);
     size_t start = fen.find_first_not_of(' ');
@@ -1351,8 +1391,8 @@ void handleLine(const std::string& line) {
     }
     return;
   }
-  // Any other line (get serial/battery/version replies, robot status, etc.)
-  // is not handled yet -- we never request them, so none are expected.
+  // Any other line (get serial/battery replies, robot status, etc.) is not
+  // handled yet -- we never request them, so none are expected.
 }
 
 // Only pushes raw bytes to a queue -- runs in the NimBLE host task's own
@@ -1457,6 +1497,13 @@ bool cynusConnect(const NimBLEAddress& address) {
   // own onboard one -- matches CynusLink's proven connect handshake. Sent
   // first, right after the connection completes.
   sendCynus("set internal engine off\n");
+
+  // "set illegal move check off" (see handleLine()'s "App version: V"
+  // branch) only exists in app version 1.4.2+ -- ask for the version on
+  // every connect so an older, not-yet-updated unit doesn't get sent a
+  // command it doesn't understand. Reply format confirmed on real hardware
+  // 2026-09-03: "App version: V1.4.2".
+  sendCynus("get software version\n");
 
   // Matches CynusLink's requestBoardSync(BOARD_SYNC_STARTUP, 0), issued
   // right after the engine-off handshake: triggers the board's own startup
