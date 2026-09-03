@@ -37,6 +37,7 @@ MILLENNIUM Supreme T2 BT -- or -- Chessnut Air/GO/Pro -- or -- ManyaCynus robot
 | MILLENNIUM Supreme T2 BT (and other genuine ChessLink boards) | Working -- native Mode B relayed as-is |
 | Chessnut Air / GO / Pro | Working -- Chessnut's own BLE protocol translated to/from Mode B, including LED move suggestions and New Game/reset highlighting |
 | ManyaCynus (camera-vision chess robot) | Working -- ManyaCynus's own line-based BLE protocol translated to/from Mode B; decodes the chess computer's own LED move suggestions and commands ManyaCynus's arm to execute them, including castling, en passant and pawn promotion |
+| iChessOne | Untested on real hardware -- driver built from the vendor's own documented BLE protocol (Nordic UART Service), not yet confirmed against a real unit |
 
 Board detection is automatic: on every (re)connect attempt, the gateway scans
 for any known board's advertised BLE name and connects to whichever one it
@@ -198,21 +199,34 @@ copied off the gateway successfully.
 
 ### Retrieving saved games
 
-Trigger a **"queen gesture"**: set up the standard starting position with
-one extra white queen placed on c4 (every one of these e-boards' piece sets
-includes a spare queen for promotion anyway) -- the corner squares light up
-to confirm it was recognized. Every saved game is then dumped over the
-gateway's native USB-CDC connection to a PC, where a small standalone
-Windows tool saves each one as its own `.pgn` file. Once the tool confirms
-every game saved correctly, the gateway deletes exactly those games from its
-own storage -- a dump that never reaches the tool, or a partial transfer,
-leaves every game in place for the next attempt.
+Two independent ways to get saved games off the gateway:
 
-See [`pgntool/`](pgntool) for the tool itself and full usage instructions.
-This is a second, independent retrieval path (built because the BLE-based
-retrieval via Chess PGN Master turned out to be blocked on an undocumented
-step in Chessnut's own closed-source SDK) -- both ends of its protocol are
-defined by this project, so there's nothing to reverse-engineer.
+**Chess PGN Master, over BLE.** Put the gateway into
+[standalone Chessnut masquerade mode](#standalone-mode-no-cable-computer-required)
+and connect from [Chess PGN Master](https://pgnmaster.kalab.com/) like you
+would to a real Chessnut board -- its own download feature retrieves saved
+games directly. Getting this working required reading the real
+[EasyLinkSDK](https://github.com/chessnutech/EasyLinkSDK) source: the app's
+read thread only accepts raw board-status frames (the same format used for
+live play), not pre-built PGN/FEN text, so the gateway replays each saved
+game's recorded positions as if they were being played live. Once a
+download completes, the gateway deletes that game from its own storage.
+
+**USB, via a standalone Windows tool.** Trigger a **"queen gesture"**: set
+up the standard starting position with one extra white queen placed on c4
+(every one of these e-boards' piece sets includes a spare queen for
+promotion anyway) -- the corner squares light up to confirm it was
+recognized. Every saved game is then dumped over the gateway's native
+USB-CDC connection to a PC, where a small standalone Windows tool saves each
+one as its own `.pgn` file. Once the tool confirms every game saved
+correctly, the gateway deletes exactly those games from its own storage --
+a dump that never reaches the tool, or a partial transfer, leaves every game
+in place for the next attempt. See [`pgntool/`](pgntool) for the tool itself
+and full usage instructions.
+
+This USB path was originally built as an independent fallback while the BLE
+path above was still blocked on an undocumented SDK step -- both are now
+confirmed working, so use whichever is more convenient.
 
 ## Web installer
 
@@ -253,7 +267,8 @@ client compatibility list.
 | v5.1 | Fix: Chessnut+Mephisto Phoenix status checksum (single-square changes and captures could silently fail to register); standalone mode now recovers automatically if a cable module boots slowly instead of needing a power cycle |
 | v5.2 | Fix: BearChess's ChessLink move-suggestion LEDs (a ghost-square filter built for Mephisto Phoenix's own reset splash was wrongly eating small real move suggestions from BearChess) |
 | v6.0 | + [Automatic PGN game recording](#automatic-pgn-recording) with USB retrieval (queen-gesture trigger, standalone Windows tool, delete-on-confirmed-transfer) |
-| v6.1 (current) | Fix: the manual king-gesture result signal could be lost entirely if its target squares (d4/d5/e4/e5) were occupied by other pieces or the two kings didn't arrive together -- those in-progress states now get unlimited patience instead of counting against (and potentially triggering) the desync-recovery timeout |
+| v6.1 | Fix: the manual king-gesture result signal could be lost entirely if its target squares (d4/d5/e4/e5) were occupied by other pieces or the two kings didn't arrive together -- those in-progress states now get unlimited patience instead of counting against (and potentially triggering) the desync-recovery timeout |
+| v6.2 (current) | Chess PGN Master's BLE game download now actually works (sends raw board-status frames instead of pre-built text, matching what the real EasyLinkSDK's read thread expects) and properly deletes each game from the gateway after a successful pickup; + initial (real-hardware-untested) iChessOne board driver |
 
 ## Components
 

@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "chessnut_board.h"
+#include "ichessone_board.h"
 #include "millennium_board.h"
 #include "pgn_recorder.h"
 
@@ -206,9 +207,10 @@ void sendBoardFrame() {
   Serial.println("[CHESSNUT] board frame notified to client");
 }
 
-// Forward declaration: defined below, used by sendSavedGamesFileTransfer()
-// right above it in this file.
+// Forward declarations: defined below, used by sendSavedGamesFileTransfer()
+// and sendMainReply() above their own definitions further down this file.
 void sendMainReply(const uint8_t* data, size_t length);
+void logHex(const char* label, const uint8_t* data, size_t length);
 
 // Drives Chess PGN Master's own file-download protocol, reverse-engineered
 // 2026-09-01 from its real official EasyLinkSDK source
@@ -229,20 +231,27 @@ void sendSavedGamesFileTransfer() {
     Serial.println("[CHESSNUT] file transfer requested but no client connected -- ignoring");
     return;
   }
-  // 2026-09-01: content-format history -- raw 38-byte board frames, then
-  // full PGN text, then this FEN-sequence format (confirmed correct against
-  // Chessnut's own C SDK docs for cl_get_file_and_delete(): "a sequence of
-  // FEN strings, separated by ;", e.g. "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/
-  // RNBQKBNR"). All three were tried over mainReadChar and produced no
-  // client-visible result at all. A live capture then showed the client
-  // subscribes to notifications on *both* board-read and main-read right at
-  // connection time -- disproving the "boardReadChar is never subscribed
-  // outside real-time mode" theory that originally motivated moving content
-  // there. Since boardReadChar is the one channel that, in the very first
-  // attempt (binary frames), got the client to actually produce a concrete
-  // (if empty) result rather than total silence, content now goes back
-  // there -- keeping the 0x37 start/end markers on mainReadChar, matching a
-  // real board's own command-reply channel.
+  // 2026-09-01/03: content-format history -- raw 38-byte board frames
+  // (tried first, but back then over mainReadChar, the wrong channel), then
+  // full PGN text, then a FEN-sequence *text* format (matched the C SDK
+  // docs for cl_get_file_and_delete() verbatim, but that doc describes what
+  // the *finished file* looks like after the SDK's own conversion, not what
+  // goes over the wire). Confirmed wrong 2026-09-03 by reading the real
+  // EasyLinkSDK read-thread source directly (sdk/EasyLink.cpp): it only
+  // accumulates a position AT ALL if the notify payload's first byte is
+  // 0x01 --
+  //   if (readBuf[0] == 0x01) { fileContent.push_back(ChessLink::toFen(readBuf, real_size)); }
+  // -- i.e. it expects the SAME raw 38-byte board-status frame this project
+  // already sends for live real-time play (buildBoardFrame()), one frame
+  // PER notify, and does its OWN FEN conversion internally. Our FEN-text
+  // payload never starts with 0x01 (always an ASCII board character), so
+  // that check silently never matched -- fileContent stayed empty for the
+  // whole transfer, the 0x37 ED end marker still arrived on schedule, and
+  // Chess PGN Master dutifully asked where to save an empty file. This
+  // exactly explains "transfer completes at the protocol level, save dialog
+  // appears, file is empty" -- confirmed live on real hardware (game file
+  // transfer completed, `0x39` delete request sent by the client afterward,
+  // yet the saved file had no content).
   const int gameCount = pgnRecorderSavedGameCount();
   Serial.printf("[CHESSNUT] starting file transfer: %d saved game(s)\r\n", gameCount);
 
@@ -251,38 +260,54 @@ void sendSavedGamesFileTransfer() {
   sendMainReply(kTransferStart, sizeof(kTransferStart));
   delay(20);  // give the client a moment to arm its own receive state
 
-  uint16_t mtu = 23;
-  if (server != nullptr && connHandle != BLE_HS_CONN_HANDLE_NONE) {
-    const uint16_t peerMtu = server->getPeerMTU(connHandle);
-    if (peerMtu >= 23) mtu = peerMtu;
-  }
-  const size_t maxPayload = mtu > 3 ? static_cast<size_t>(mtu - 3) : 20;
+  // Mode-B wire-order (h..a per rank) starting position -- same convention
+  // buildBoardFrame() already expects (it reads modeBFrame+1 directly via
+  // modeBStatusWireIndex()), matching board_driver.cpp's own
+  // kStartPositionWire. Duplicated locally rather than exported from there,
+  // since it's a small, self-contained literal and that constant lives in
+  // an anonymous namespace not meant to be shared across files.
+  static constexpr char kStartBoardWire[] =
+      "RNBKQBNRPPPPPPPP................................pppppppprnbkqbnr";
 
-  static char fenSequence[1024 * 4];  // matches the SDK doc's own 10KB example sizing order-of-magnitude
+  auto sendRawFrame = [](const uint8_t modeBFrame[kModeBStatusFrameLength]) {
+    uint8_t frame38[38];
+    buildBoardFrame(modeBFrame, frame38);
+    if (boardReadChar != nullptr && boardNotifyEnabled) {
+      boardReadChar->setValue(frame38, sizeof(frame38));
+      boardReadChar->notify();
+    } else {
+      Serial.println("[CHESSNUT] -> board-read notify SKIPPED (not subscribed or characteristic "
+                      "missing) -- client will never see this frame");
+    }
+    delay(20);  // let each notify actually land before the next, same pacing sendMainReply()'s
+                // callers already use elsewhere in this function
+  };
+
   for (int i = 0; i < gameCount; ++i) {
-    const size_t len = pgnRecorderGameFenSequenceByIndex(i, fenSequence, sizeof(fenSequence));
-    if (len == 0) {
-      Serial.printf("[CHESSNUT] game %d produced an empty FEN sequence, skipping\r\n", i);
-      continue;
-    }
-    // Sent as plain text, unwrapped -- the documented C API describes the
-    // file content itself as nothing but "a sequence of FEN strings,
-    // separated by ;" with no additional framing at that level. An earlier
-    // attempt added a speculative 0x01-marker+length prefix per chunk
-    // (borrowed from the *HID*-transport read thread's own parsing, a
-    // different transport than this BLE path), which didn't help either --
-    // removed again rather than layering more invented framing on top of
-    // an already-undocumented guess.
-    for (size_t offset = 0; offset < len; offset += maxPayload) {
-      const size_t count = std::min(maxPayload, len - offset);
-      if (boardReadChar != nullptr && boardNotifyEnabled) {
-        boardReadChar->setValue(reinterpret_cast<const uint8_t*>(fenSequence + offset), count);
-        boardReadChar->notify();
+    // The starting position isn't itself stored in the .snap file (which
+    // only holds post-move snapshots -- see pgnRecorderGameFenSequenceByIndex()'s
+    // own comment in pgn_recorder.cpp), but the SDK doc's own worked example
+    // begins with it, so it's sent first, synthesized directly.
+    uint8_t startFrame[kModeBStatusFrameLength] = {};
+    startFrame[0] = 's';
+    memcpy(startFrame + 1, kStartBoardWire, 64);
+    sendRawFrame(startFrame);
+
+    char snapPath[48];
+    int frameCount = 1;  // the synthesized starting position, already sent above
+    if (pgnRecorderGameSnapshotPathByIndex(i, snapPath, sizeof(snapPath))) {
+      File snapFile = LittleFS.open(snapPath, "r");
+      if (snapFile) {
+        uint8_t snapFrame[kModeBStatusFrameLength];
+        while (static_cast<size_t>(snapFile.available()) >= kModeBStatusFrameLength) {
+          snapFile.read(snapFrame, kModeBStatusFrameLength);
+          sendRawFrame(snapFrame);
+          ++frameCount;
+        }
+        snapFile.close();
       }
-      delay(20);  // let each notify actually land before the next
     }
-    Serial.printf("[CHESSNUT] sent %u byte(s) (FEN sequence) for game %d\r\n",
-                  static_cast<unsigned>(len), i);
+    Serial.printf("[CHESSNUT] sent %d raw position frame(s) for game %d\r\n", frameCount, i);
   }
 
   delay(20);
@@ -343,6 +368,9 @@ void relayLedCommandToBoard(const uint8_t bytes8[8]) {
     }
     case BoardType::Chessnut:
       chessnutSetHighlightedSquares(highlights, count);
+      break;
+    case BoardType::IChessOne:
+      ichessoneSetHighlightedSquares(highlights, count);
       break;
     default:
       // Cynus has no per-square LEDs of its own; nothing to relay.
@@ -419,13 +447,31 @@ void handleMainWrite(const uint8_t* data, size_t length) {
     // "Delete retrieved file(s)" -- the real SDK/PGN Master sends this
     // after a successful download (PGN Master's own docs: "Games are
     // automatically removed from the e-board after the transfer is
-    // complete"). Deliberately NOT deleting anything here per explicit
-    // user instruction ("wir loeschen aber nicht", 2026-09-01) -- this
-    // project's own rolling-10-game window is the only deletion policy;
-    // acking without deleting just means a game stays downloadable again
-    // later instead of disappearing after one pickup.
-    Serial.println("[CHESSNUT] delete-file request received -- acked, not actually deleting "
-                    "(rolling window handles pruning instead)");
+    // complete"). Originally acked without deleting anything, per explicit
+    // user instruction ("wir loeschen aber nicht", 2026-09-01) -- kept that
+    // way until the transfer format itself was confirmed correct.
+    //
+    // Now deletes for real (2026-09-03), once real-hardware testing showed
+    // exactly why this matters: Chess PGN Master evidently polls
+    // 0x31/0x33/0x34 repeatedly and automatically on its own (confirmed via
+    // a live capture -- 633 back-to-back retrieval cycles over 13.5 minutes,
+    // ~1.3s apart) for as long as pgnRecorderSavedGameCount() keeps
+    // reporting a game available. Without ever deleting, every single one
+    // of those cycles re-fetched the same still-present game, and the app
+    // accumulated all 633 identical copies into one saved .pgn file. Real
+    // deletion here is what makes the count actually drop to 0 after the
+    // first successful pickup, which is what should make that polling loop
+    // stop finding anything to re-fetch.
+    //
+    // Deletes every currently-saved game (0x39 has no per-file index, same
+    // as 0x33/0x34), from highest index to lowest so chronologicalSlotByIndex()'s
+    // live recompute stays valid throughout the loop -- same pattern
+    // usb_pgn_dump.cpp's own delete-on-ack already uses.
+    const int countToDelete = pgnRecorderSavedGameCount();
+    for (int i = countToDelete - 1; i >= 0; --i) {
+      pgnRecorderDeleteGameByIndex(i);
+    }
+    Serial.printf("[CHESSNUT] delete-file request received -- deleted %d game(s)\r\n", countToDelete);
     sendMainReply(kAck, sizeof(kAck));
   } else if (length >= 3 && data[0] == 0x41) {
     // Still unidentified -- sent once before entering upload mode, ahead of

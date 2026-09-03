@@ -7,6 +7,7 @@
 #include "board_driver.h"
 #include "chessnut_board.h"
 #include "cynus_board.h"
+#include "ichessone_board.h"
 #include "millennium_board.h"
 #include "pgn_recorder.h"
 
@@ -144,6 +145,12 @@ void setCornerLeds(bool on) {
       SquareHighlight highlights[4];
       for (int i = 0; i < 4; ++i) highlights[i] = {corners[i], SquareHighlightRole::Generic};
       chessnutSetHighlightedSquares(on ? highlights : nullptr, on ? 4u : 0u);
+      break;
+    }
+    case BoardType::IChessOne: {
+      SquareHighlight highlights[4];
+      for (int i = 0; i < 4; ++i) highlights[i] = {corners[i], SquareHighlightRole::Generic};
+      ichessoneSetHighlightedSquares(on ? highlights : nullptr, on ? 4u : 0u);
       break;
     }
     default:

@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v6.1 (fix: king-gesture result signal lost if its squares were occupied)",
+  "version": "v6.2 (Chess PGN Master BLE retrieval fixed, real deletion, iChessOne driver)",
   "new_install_prompt_erase": true,
   "builds": [
     {

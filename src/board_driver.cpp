@@ -4,6 +4,7 @@
 
 #include "chessnut_board.h"
 #include "cynus_board.h"
+#include "ichessone_board.h"
 #include "millennium_board.h"
 
 namespace {
@@ -339,6 +340,17 @@ void dispatchLedFrameToBoard(BoardType type, const uint8_t frame167[167]) {
     // with a stability wait) rather than the shared decoder above -- see
     // cynus_board.cpp for why.
     cynusHandleLedFrame(frame167);
+  } else if (type == BoardType::IChessOne) {
+    // Simple relay via the shared decoder, same as Chessnut's own decode
+    // step above -- but without Chessnut's ghost-square filter, which was
+    // built specifically for Chessnut/Phoenix-observed geometry quirks with
+    // no evidence (yet) that iChessOne needs the same treatment. Role
+    // (source/destination) is dropped -- iChessOne only gets one steady
+    // color from this project (see ichessoneSetHighlightedSquares()), so
+    // there's nothing to distinguish.
+    SquareHighlight squares[32];
+    const size_t count = decodeKingLedFrame(frame167, squares, 32);
+    ichessoneSetHighlightedSquares(count > 0 ? squares : nullptr, count);
   }
 }
 
@@ -347,6 +359,7 @@ void clearBoardLeds(BoardType type) {
     case BoardType::Millennium: millenniumClearLeds(); break;
     case BoardType::Chessnut: chessnutSetHighlightedSquares(nullptr, 0); break;
     case BoardType::Cynus: cynusClearLeds(); break;
+    case BoardType::IChessOne: ichessoneClearLeds(); break;
     default: break;
   }
 }

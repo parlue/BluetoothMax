@@ -8,6 +8,7 @@
 #include "chessnut_board.h"
 #include "chessnut_server.h"
 #include "cynus_board.h"
+#include "ichessone_board.h"
 #include "millennium_board.h"
 #include "pgn_recorder.h"
 
@@ -159,6 +160,7 @@ bool anyBoardConnected() {
     case BoardType::Millennium: return millenniumIsConnected();
     case BoardType::Chessnut: return chessnutIsConnected();
     case BoardType::Cynus: return cynusIsConnected();
+    case BoardType::IChessOne: return ichessoneIsConnected();
     default: return false;
   }
 }
@@ -175,6 +177,7 @@ const KnownBoard kKnownBoards[] = {
     {kChessnutBoardName, BoardType::Chessnut},
     {kChessnutBoardNameAlt, BoardType::Chessnut},
     {kCynusBoardName, BoardType::Cynus},
+    {kIChessOneBoardName, BoardType::IChessOne},
 };
 
 // Case-insensitive substring search -- BLE devices vary the exact advertised
@@ -223,6 +226,7 @@ bool connectToBoard() {
   const bool connected = (type == BoardType::Millennium) ? millenniumConnect(address)
                           : (type == BoardType::Chessnut) ? chessnutConnect(address)
                           : (type == BoardType::Cynus)    ? cynusConnect(address)
+                          : (type == BoardType::IChessOne) ? ichessoneConnect(address)
                                                            : false;
   if (!connected) return false;
 
@@ -276,6 +280,14 @@ void showBtBtSignal(const uint8_t* squares, size_t count, const char* cynusText)
     case BoardType::Cynus:
       cynusShowText(cynusText);
       break;
+    case BoardType::IChessOne: {
+      SquareHighlight highlights[4];
+      for (size_t i = 0; i < count && i < 4; ++i) {
+        highlights[i] = {squares[i], SquareHighlightRole::Generic};
+      }
+      ichessoneSetHighlightedSquares(highlights, count);
+      break;
+    }
     default:
       break;
   }
@@ -818,6 +830,7 @@ void loop() {
       case BoardType::Millennium: millenniumPoll(); break;
       case BoardType::Chessnut: chessnutPoll(); break;
       case BoardType::Cynus: cynusPoll(); break;
+      case BoardType::IChessOne: ichessonePoll(); break;
       default: break;
     }
 
@@ -896,6 +909,7 @@ void loop() {
                   activeBoardType == BoardType::Millennium ? "millennium"
                   : activeBoardType == BoardType::Chessnut  ? "chessnut"
                   : activeBoardType == BoardType::Cynus     ? "cynus"
+                  : activeBoardType == BoardType::IChessOne ? "ichessone"
                                                              : "none",
                   static_cast<unsigned long>(rawUartRxBytes),
                   static_cast<unsigned long>(discardedUartRxBytes),
