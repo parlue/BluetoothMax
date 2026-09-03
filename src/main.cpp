@@ -111,7 +111,7 @@ BtBtStage btBtStage = BtBtStage::Inactive;
 uint32_t btBtStageAt = 0;
 int btBtSelectedMode = -1;  // 0 = ChessLink, 1 = Chessnut (selected via 2nd white queen)
 constexpr uint32_t kCableDetectTimeoutMs = 5000;
-constexpr uint32_t kBtBtSignalHoldMs = 2000;
+constexpr uint32_t kBtBtSignalHoldMs = 3000;
 
 // Fallback added 2026-08-31 at the user's explicit direction: if Phoenix is
 // still mid-boot when this module powers up, the initial 5s cable-detect
@@ -357,7 +357,7 @@ void processBtBtStateMachine() {
       btBtSelectedMode = mode;
       Serial.printf("BT-BT mode: %s selected via second white queen\r\n",
                     mode == 0 ? "ChessLink" : "Chessnut");
-      showBtBtSignal(kCornerSquares, 4, mode == 0 ? "CSLMode" : "NutMode");
+      showBtBtSignal(kCornerSquares, 4, mode == 0 ? "ChessL" : "Chnut");
       btBtStage = BtBtStage::ShowingConfirm;
       btBtStageAt = nowMs;
       break;

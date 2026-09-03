@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v6.4 (Cynus: auto-disable illegal-move check on firmware 1.4.2+)",
+  "version": "v6.5 (fix: ManyaCynus standalone masquerade queen gesture)",
   "new_install_prompt_erase": true,
   "builds": [
     {

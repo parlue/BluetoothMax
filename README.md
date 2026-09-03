@@ -142,7 +142,7 @@ squares light up on Millennium/Chessnut boards, ManyaCynus shows text):
 1. The gateway connects to the e-board as usual and confirms its starting
    position.
 2. **Ready signal**: the four center squares (d4/d5/e4/e5) light up (ManyaCynus:
-   "OK") for 2 seconds, then clear.
+   "OK") for 3 seconds, then clear.
 3. Place a **second white queen** on the board (every one of these e-boards'
    piece sets includes a spare queen for promotion anyway):
    - **a4** selects ChessLink masquerade -- the gateway advertises as
@@ -151,7 +151,7 @@ squares light up on Millennium/Chessnut boards, ManyaCynus shows text):
    - **b4** selects Chessnut masquerade -- the gateway advertises as
      "Chessnut Air", speaking Chessnut's own native BLE protocol.
 4. **Confirmed signal**: the four corner squares light up (ManyaCynus:
-   "CSLMode" / "NutMode") for 2 seconds, then clear, and the selected
+   "ChessL" / "Chnut") for 3 seconds, then clear, and the selected
    masquerade starts advertising.
 5. Connect to the gateway from your chess software like you would to a real
    board of that type.
@@ -295,7 +295,8 @@ client compatibility list.
 | v6.1 | Fix: the manual king-gesture result signal could be lost entirely if its target squares (d4/d5/e4/e5) were occupied by other pieces or the two kings didn't arrive together -- those in-progress states now get unlimited patience instead of counting against (and potentially triggering) the desync-recovery timeout |
 | v6.2 | Chess PGN Master's BLE game download now actually works (sends raw board-status frames instead of pre-built text, matching what the real EasyLinkSDK's read thread expects) and properly deletes each game from the gateway after a successful pickup; + initial (real-hardware-untested) iChessOne board driver |
 | v6.3 | Manual king-gesture game results are now also confirmed on the board itself (3s LED/display signal); + ManyaCynus manual position override to recover from an unexpected mid-game BLE reconnect without losing the game |
-| v6.4 (current) | ManyaCynus: on firmware 1.4.2+, the gateway now auto-detects the version and disables Cynus's own onboard illegal-move checking, which previously could interfere with an external chess computer driving the game |
+| v6.4 | ManyaCynus: on firmware 1.4.2+, the gateway now auto-detects the version and disables Cynus's own onboard illegal-move checking, which previously could interfere with an external chess computer driving the game |
+| v6.5 (current) | Fix: the standalone-mode masquerade gesture (second white queen on a4/b4) never worked on ManyaCynus -- the gateway's own single-legal-move check rejected the extra queen before the masquerade selection logic ever saw it; confirmation signal text changed to "ChessL"/"Chnut", shown for 3s (was "CSLMode"/"NutMode", 2s) |
 
 ## Components
 

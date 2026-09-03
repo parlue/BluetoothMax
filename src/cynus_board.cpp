@@ -581,6 +581,34 @@ bool matchesOption(const char scanned[65], const char* optionFen) {
   return fenPlacementToBoard(optionFen, pattern) && boardsEqual(scanned, pattern);
 }
 
+// Detects main.cpp's own BT-BT masquerade mode-select gesture
+// (detectBtBtModeSelection()): a full normal or flipped starting position
+// with one extra white queen placed on a4 (ChessLink) or b4 (Chessnut).
+// board64 index for rank 4: rankTop = 8 - 4 = 4, so a4 = 4*8+0 = 32,
+// b4 = 4*8+1 = 33 (same rankTop*8+file0 convention as everywhere else in
+// this file). Sets gestureSquare to whichever one matched.
+bool matchesBtBtQueenGesture(const char scanned[65], int& gestureSquare) {
+  char normalStart[65], flippedStart[65];
+  if (!fenPlacementToBoard(kStartFen, normalStart) || !fenPlacementToBoard(kFlippedStartFen, flippedStart)) {
+    return false;
+  }
+  constexpr int kA4 = 4 * 8 + 0;
+  constexpr int kB4 = 4 * 8 + 1;
+  for (const char* base : {normalStart, flippedStart}) {
+    for (int extra : {kA4, kB4}) {
+      if (base[extra] != '.') continue;  // a4/b4 must be empty in a real start position
+      char candidate[65];
+      memcpy(candidate, base, sizeof(candidate));
+      candidate[extra] = 'Q';
+      if (boardsEqual(scanned, candidate)) {
+        gestureSquare = extra;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 void enterFreeAnalysis();
 void enterSetPosition();
 
@@ -1224,6 +1252,23 @@ void handleFenLine(const std::string& fen) {
   if (matchesOption(scanned, kKingLiftFen)) {
     Serial.println("[CYNUS] black king lifted; waiting for an option square, not an error");
     return;
+  }
+
+  {
+    int gestureSquare = -1;
+    if (matchesBtBtQueenGesture(scanned, gestureSquare)) {
+      // Standalone/BT-BT masquerade mode select (main.cpp's own
+      // detectBtBtModeSelection(), user's own design): a second white
+      // queen on a4 or b4, in addition to a full starting position, isn't
+      // a legal move -- special-cased here, ahead of inferMove()'s single-
+      // legal-move gate, exactly like the black-king option squares above.
+      // Forwarded as a raw snapshot without touching board64, so removing
+      // the extra queen again cleanly resumes whatever was confirmed
+      // before (no PGN/move-tracking disruption).
+      Serial.println("[CYNUS] BT-BT masquerade queen gesture detected; forwarding as a raw snapshot");
+      publishBoard(scanned);
+      return;
+    }
   }
 
   if (moveCycle == MoveCycle::WaitEngineMove) {
