@@ -30,6 +30,9 @@ MILLENNIUM Supreme T2 BT -- or -- Chessnut Air/GO/Pro -- or -- ManyaCynus robot
   <img src="images/module-minidin.jpg" alt="BluetoothMax module, Mini-DIN cable side" width="300">
 </p>
 
+**Full user manual (PDF):** [English](BluetoothMax-Manual-EN.pdf) &middot;
+[Deutsch](BluetoothMax-Handbuch-DE.pdf)
+
 ## Supported e-boards
 
 | Board | Status |
