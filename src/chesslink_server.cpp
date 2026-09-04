@@ -258,6 +258,20 @@ class RxCallbacks final : public NimBLECharacteristicCallbacks {
     // Only pushes raw bytes into a queue -- runs on the BLE host task's own
     // (small) stack, matching every other board driver's own established
     // stack-overflow-avoidance pattern in this project.
+    const std::string rawValue = characteristic->getValue();
+    // TEMPORARY diagnostic, 2026-09-04: BC reports it sent its reply move,
+    // but no "[CHESSLINK] L frame received" ever showed up on the gateway --
+    // logging every raw write here (even when rejected/ignored below) to see
+    // whether it arrives at all. Remove once resolved.
+    {
+      char hex[3 * kMaxNotifyChunk + 1] = {};
+      size_t pos = 0;
+      for (size_t i = 0; i < rawValue.size() && pos + 3 < sizeof(hex); ++i) {
+        pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", static_cast<uint8_t>(rawValue[i]));
+      }
+      Serial.printf("[CHESSLINK RX WRITE] started=%d len=%u bytes=%s\r\n", started ? 1 : 0,
+                    static_cast<unsigned>(rawValue.size()), hex);
+    }
     if (!started) return;  // see TxCallbacks::onSubscribe's own comment
     if (rxQueue == nullptr) return;
     const std::string value = characteristic->getValue();
@@ -356,6 +370,33 @@ void chesslinkServerPoll() {
     for (uint8_t i = 0; i < packet.length; ++i) processByte(packet.data[i]);
   }
 
+  // Active 1s health-check watchdog, ported from CynusLink's own proven
+  // processSupervision() (2026-09-04): don't rely solely on onConnect/
+  // onDisconnect callbacks firing -- if the BLE stack ever silently misses a
+  // disconnect event (a known, if rare, real-world BLE edge case),
+  // connected/notifyEnabled could stay stuck true forever with nothing to
+  // self-correct it, and advertising could silently stop without anything
+  // noticing and restarting it. This polls the actual BLE stack state
+  // directly instead, self-healing within at most 1s regardless of whether
+  // any callback ever fired.
+  static uint32_t lastHealthCheckAt = 0;
+  if (static_cast<uint32_t>(millis() - lastHealthCheckAt) >= 1000) {
+    lastHealthCheckAt = millis();
+    if (connected && server != nullptr && server->getConnectedCount() == 0) {
+      Serial.println("[CHESSLINK] health-check: connected flag was stale (0 actual clients) -- resetting");
+      connected = false;
+      notifyEnabled = false;
+      connHandle = BLE_HS_CONN_HANDLE_NONE;
+    }
+    if (!connected) {
+      NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+      if (advertising != nullptr && !advertising->isAdvertising()) {
+        Serial.println("[CHESSLINK] health-check: advertising was inactive -- restarting");
+        NimBLEDevice::startAdvertising();
+      }
+    }
+  }
+
   if (connected && notifyEnabled && haveCachedStatus &&
       (!haveSentStatus || memcmp(lastSentStatus, cachedStatus, sizeof(cachedStatus)) != 0)) {
     sendStatus();
@@ -363,7 +404,25 @@ void chesslinkServerPoll() {
 }
 
 void chesslinkServerPublishStatus(const uint8_t frame[kModeBStatusFrameLength]) {
-  memcpy(cachedStatus, frame, kModeBStatusFrameLength);
+  // frame's 64 board bytes are in the cable/King wire layout
+  // (modeBStatusWireIndex(): rank ascending from 1, file reversed h..a --
+  // proven correct for that transport, see board_driver.h's own comment).
+  // A real BLE ChessLink client (BearChess) instead expects plain board64
+  // order, exactly like CynusLink's own proven sendStatus() ("for (int i =
+  // 0; i < 64; ++i) p += board64[i];", no rotation at all). Relaying frame
+  // unconverted sent BearChess a 180-degree-rotated board (confirmed via a
+  // real capture 2026-09-04: a played e2-e4 arrived describable only as a
+  // rotated square, and BearChess's own reply move then decoded to
+  // nonsense squares because it was computed against that wrong board).
+  // chessnut_server.cpp's buildBoardFrame() already undoes this same
+  // rotation for its own protocol -- this is the same fix, for ChessLink.
+  cachedStatus[0] = frame[0];
+  for (int rankTop = 0; rankTop < 8; ++rankTop) {
+    const int rank = 8 - rankTop;
+    for (int file0 = 0; file0 < 8; ++file0) {
+      cachedStatus[1 + rankTop * 8 + file0] = frame[1 + modeBStatusWireIndex(file0, rank)];
+    }
+  }
   haveCachedStatus = true;
   // Immediate forward, mirroring the cable path's own immediate-forward
   // behavior in onBoardStatusFrame() -- chesslinkServerPoll()'s own
