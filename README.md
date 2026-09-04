@@ -88,6 +88,12 @@ the same robot that this gateway's ManyaCynus support is ported from.
   "E2-E4", "0-0" for castling), "POS OK" once the starting position is
   confirmed, and the specific offending square(s) (e.g. "+E4") when a scan
   doesn't settle into a legal position.
+- **Driven live by a connected Chessnut app** (standalone mode, Chessnut
+  masquerade): a connected app's move/highlight commands are the only way
+  it can tell the board what move to make at all -- confirmed against both
+  Chess PGN Master and Chess Dojo, live play included, not just "replay a
+  saved game" -- so every one is decoded and sent straight to ManyaCynus's
+  own robot arm to execute.
 - **Recovering from an unexpected reconnect**: if ManyaCynus loses its BLE
   connection mid-game (e.g. it resets itself) and reconnects, the gateway
   would normally insist on seeing the exact starting position again before
@@ -296,7 +302,8 @@ client compatibility list.
 | v6.2 | Chess PGN Master's BLE game download now actually works (sends raw board-status frames instead of pre-built text, matching what the real EasyLinkSDK's read thread expects) and properly deletes each game from the gateway after a successful pickup; + initial (real-hardware-untested) iChessOne board driver |
 | v6.3 | Manual king-gesture game results are now also confirmed on the board itself (3s LED/display signal); + ManyaCynus manual position override to recover from an unexpected mid-game BLE reconnect without losing the game |
 | v6.4 | ManyaCynus: on firmware 1.4.2+, the gateway now auto-detects the version and disables Cynus's own onboard illegal-move checking, which previously could interfere with an external chess computer driving the game |
-| v6.5 (current) | Fix: the standalone-mode masquerade gesture (second white queen on a4/b4) never worked on ManyaCynus -- the gateway's own single-legal-move check rejected the extra queen before the masquerade selection logic ever saw it; confirmation signal text changed to "ChessL"/"Chnut", shown for 3s (was "CSLMode"/"NutMode", 2s) |
+| v6.5 | Fix: the standalone-mode masquerade gesture (second white queen on a4/b4) never worked on ManyaCynus -- the gateway's own single-legal-move check rejected the extra queen before the masquerade selection logic ever saw it; confirmation signal text changed to "ChessL"/"Chnut", shown for 3s (was "CSLMode"/"NutMode", 2s) |
+| v6.6 (current) | Fix: a connected Chessnut app's move commands were silently ignored on ManyaCynus during live play (Chess Dojo confirmed affected) -- now always decoded and sent to the robot arm, not just when a since-removed "Replay mode" toggle was armed |
 
 ## Components
 

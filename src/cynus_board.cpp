@@ -1626,6 +1626,54 @@ void cynusShowText(const char* text) {
   cynusDisplay(text);
 }
 
+// A connected Chessnut-protocol client's "light these squares" command
+// reaches us via chessnut_server.cpp's relayLedCommandToBoard() -- just a
+// bitmask, no source/destination distinction, no per-square LEDs on Cynus
+// to actually light. User's own request, 2026-09-03, originally scoped to
+// Chess PGN Master's "replay this game" feature specifically and gated
+// behind a manual Replay-mode toggle (black king on b5) -- but real-
+// hardware testing the same day against Chess Dojo (a live-play Chessnut
+// client, not just a replay tool) showed this highlight command is the
+// ONLY way any Chessnut client tells the board what move to make at all,
+// live play included -- gating it behind an opt-in toggle silently broke
+// ordinary play. Now unconditional: every 2-square highlight is decoded
+// and, if it resolves to a plausible move, sent to ManyaCynus's own robot
+// arm via commitMoveToRobot(), exactly like a King/Phoenix-suggested move
+// already is. Source/destination resolved from the two highlighted
+// squares via board occupancy, same heuristic as the King/Phoenix
+// 'L'-frame path (resolveAlternatingPair()); anything else (wrong square
+// count -- e.g. an app's own LED test/reset flood -- or ambiguous
+// occupancy) is logged and skipped rather than guessed at.
+void cynusExecuteHighlightedMove(const SquareHighlight* highlights, size_t count) {
+  if (count != 2) {
+    Serial.printf("[CYNUS] highlighted-move command has %u square(s), expected 2 -- ignored\r\n",
+                  static_cast<unsigned>(count));
+    return;
+  }
+  // SquareHighlight.squareIndex uses board_driver.h's boardSquareIndex()
+  // convention ((rank-1)*8+file0, rank1 first) -- convert to this file's
+  // own board64 convention (rankTop*8+file0, rank8 first) before touching
+  // board64/plausibleBoardMove().
+  auto toBoard64Index = [](uint8_t squareIndex) {
+    const int file0 = squareIndex % 8;
+    const int rank = squareIndex / 8 + 1;
+    const int rankTop = 8 - rank;
+    return rankTop * 8 + file0;
+  };
+  const int a = toBoard64Index(highlights[0].squareIndex);
+  const int b = toBoard64Index(highlights[1].squareIndex);
+  int source = -1, destination = -1;
+  if (!resolveAlternatingPair(a, b, source, destination)) {
+    Serial.println("[CYNUS] highlighted-move command source/destination ambiguous "
+                    "from current board occupancy -- ignored");
+    return;
+  }
+  const std::string uci = squareName(source % 8, source / 8) + squareName(destination % 8, destination / 8);
+  Serial.printf("[CYNUS] highlighted-move command decoded as %s -- commanding robot\r\n",
+                uci.c_str());
+  commitMoveToRobot(uci);
+}
+
 void cynusPoll() {
   RawPacket packet;
   while (rxQueue != nullptr && xQueueReceive(rxQueue, &packet, 0) == pdTRUE) {

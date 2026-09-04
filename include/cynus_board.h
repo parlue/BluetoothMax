@@ -33,6 +33,14 @@ void cynusHandleLedFrame(const uint8_t frame167[167]);
 void cynusClearLeds();
 
 // Shows short (<=7 char) feedback text on Cynus's own display -- exposed so
-// main.cpp can show BT-BT mode-selection signals ("OK", "CSLMode", ...) on
+// main.cpp can show BT-BT mode-selection signals ("OK", "ChessL", ...) on
 // boards that have no LEDs of their own.
 void cynusShowText(const char* text);
+
+// A connected Chessnut-protocol client's "light these squares" command has
+// no LEDs to relay to on Cynus -- forwarded here instead so it can command
+// ManyaCynus's own robot arm to execute the move. This is the only way any
+// Chessnut client (Chess PGN Master, Chess Dojo, ...) tells the board what
+// move to make at all, live play included -- see
+// cynusExecuteHighlightedMove()'s own comment for the full rationale.
+void cynusExecuteHighlightedMove(const SquareHighlight* highlights, size_t count);

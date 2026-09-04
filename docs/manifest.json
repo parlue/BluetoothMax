@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v6.5 (fix: ManyaCynus standalone masquerade queen gesture)",
+  "version": "v6.6 (fix: ManyaCynus now executes Chessnut-app moves live)",
   "new_install_prompt_erase": true,
   "builds": [
     {
