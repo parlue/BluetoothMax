@@ -89,11 +89,15 @@ the same robot that this gateway's ManyaCynus support is ported from.
   confirmed, and the specific offending square(s) (e.g. "+E4") when a scan
   doesn't settle into a legal position.
 - **Driven live by a connected Chessnut app** (standalone mode, Chessnut
-  masquerade): a connected app's move/highlight commands are the only way
-  it can tell the board what move to make at all -- confirmed against both
-  Chess PGN Master and Chess Dojo, live play included, not just "replay a
-  saved game" -- so every one is decoded and sent straight to ManyaCynus's
-  own robot arm to execute.
+  masquerade): for normal human-vs-computer play, the connected app's
+  engine-move commands are decoded and sent straight to ManyaCynus's own
+  robot arm to execute -- confirmed against Chess Dojo. The same command is
+  also used by at least one client to echo a move it just saw the human
+  make by hand; that echo is recognized (it's textually identical to the
+  human move the gateway itself just detected) and never re-executed, so
+  the robot only ever moves for the computer's own side. Not used for a
+  "bot plays both sides" self-play/replay mode, and inactive while Free
+  Analysis or Set Position is active.
 - **Recovering from an unexpected reconnect**: if ManyaCynus loses its BLE
   connection mid-game (e.g. it resets itself) and reconnects, the gateway
   would normally insist on seeing the exact starting position again before
@@ -303,7 +307,8 @@ client compatibility list.
 | v6.3 | Manual king-gesture game results are now also confirmed on the board itself (3s LED/display signal); + ManyaCynus manual position override to recover from an unexpected mid-game BLE reconnect without losing the game |
 | v6.4 | ManyaCynus: on firmware 1.4.2+, the gateway now auto-detects the version and disables Cynus's own onboard illegal-move checking, which previously could interfere with an external chess computer driving the game |
 | v6.5 | Fix: the standalone-mode masquerade gesture (second white queen on a4/b4) never worked on ManyaCynus -- the gateway's own single-legal-move check rejected the extra queen before the masquerade selection logic ever saw it; confirmation signal text changed to "ChessL"/"Chnut", shown for 3s (was "CSLMode"/"NutMode", 2s) |
-| v6.6 (current) | Fix: a connected Chessnut app's move commands were silently ignored on ManyaCynus during live play (Chess Dojo confirmed affected) -- now always decoded and sent to the robot arm, not just when a since-removed "Replay mode" toggle was armed |
+| v6.6 | Fix: a connected Chessnut app's move commands were silently ignored on ManyaCynus during live play (Chess Dojo confirmed affected) -- now decoded and sent to the robot arm |
+| v6.7 (current) | Fix: the same Chessnut highlight command is also used by a connected app to echo a move it just saw the human make by hand -- confirmed on real hardware to make ManyaCynus's robot arm re-grab and disturb a piece the human had already placed correctly (a king, right after a hand-played castling). Now recognized and ignored (it's textually identical to the human move the gateway itself just detected) instead of re-executed, so the robot only ever moves for the computer's own side; also inactive while Free Analysis or Set Position is active. Separately: two BLE masquerade services (ChessLink and Chessnut) were both always connectable regardless of which one was actually selected, which could route a client to the wrong one and explain total silence -- the non-selected one now rejects connections outright instead |
 
 ## Components
 

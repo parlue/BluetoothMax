@@ -1,6 +1,6 @@
 {
   "name": "BluetoothMax",
-  "version": "v6.6 (fix: ManyaCynus now executes Chessnut-app moves live)",
+  "version": "v6.7 (fix: robot-move echo protection, masquerade service isolation)",
   "new_install_prompt_erase": true,
   "builds": [
     {

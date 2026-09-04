@@ -195,6 +195,22 @@ void handleFrame(const uint8_t* frame, size_t length) {
 class ServerCallbacks final : public NimBLEServerCallbacks {
  public:
   void onConnect(NimBLEServer*, NimBLEConnInfo& info) override {
+    // chesslinkServerInit() and chessnutServerInit() both run unconditionally
+    // at boot and share one NimBLEServer (NimBLEDevice::createServer() is a
+    // singleton) -- so this service's characteristics stay live and
+    // connectable even when Chessnut masquerade was the one actually
+    // selected via the BT-BT queen gesture. A client that already knows
+    // this device's address/UUIDs from an earlier session (BLE has no
+    // per-service "not advertised" enforcement once directly connected)
+    // could connect here anyway and see total silence with no explanation.
+    // Reject outright instead -- confirmed real-hardware case, 2026-09-04.
+    if (!started) {
+      Serial.printf("[CHESSLINK] rejecting connection from %s -- ChessLink masquerade was not "
+                    "selected this session (Chessnut was); disconnecting\r\n",
+                    info.getAddress().toString().c_str());
+      if (server != nullptr) server->disconnect(info.getConnHandle());
+      return;
+    }
     connected = true;
     connHandle = info.getConnHandle();
     haveSentStatus = false;
@@ -218,6 +234,17 @@ class ServerCallbacks final : public NimBLEServerCallbacks {
 class TxCallbacks final : public NimBLECharacteristicCallbacks {
  public:
   void onSubscribe(NimBLECharacteristic*, NimBLEConnInfo&, uint16_t subValue) override {
+    // Per-characteristic callbacks are bound unconditionally in Init(), so
+    // this fires even when Chessnut (not ChessLink) was the mode actually
+    // selected -- the server-level onConnect guard above doesn't cover a
+    // client that connects generically and only then subscribes to this
+    // specific, non-selected service's characteristic. See that guard's own
+    // comment for the full real-hardware story.
+    if (!started) {
+      Serial.println("[CHESSLINK] ignoring subscribe on tx characteristic; ChessLink masquerade "
+                      "was not selected this session");
+      return;
+    }
     notifyEnabled = subValue != 0;
     Serial.printf("[CHESSLINK] client %s notifications on tx characteristic\r\n",
                   notifyEnabled ? "enabled" : "disabled");
@@ -231,6 +258,7 @@ class RxCallbacks final : public NimBLECharacteristicCallbacks {
     // Only pushes raw bytes into a queue -- runs on the BLE host task's own
     // (small) stack, matching every other board driver's own established
     // stack-overflow-avoidance pattern in this project.
+    if (!started) return;  // see TxCallbacks::onSubscribe's own comment
     if (rxQueue == nullptr) return;
     const std::string value = characteristic->getValue();
     size_t offset = 0;

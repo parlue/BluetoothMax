@@ -39,8 +39,8 @@ void cynusShowText(const char* text);
 
 // A connected Chessnut-protocol client's "light these squares" command has
 // no LEDs to relay to on Cynus -- forwarded here instead so it can command
-// ManyaCynus's own robot arm to execute the move. This is the only way any
-// Chessnut client (Chess PGN Master, Chess Dojo, ...) tells the board what
-// move to make at all, live play included -- see
-// cynusExecuteHighlightedMove()'s own comment for the full rationale.
+// ManyaCynus's own robot arm to execute the move, for normal human-vs-
+// computer play. See the .cpp's own comment for the echo-protection this
+// relies on (only ever executes a genuine new engine move, never a replay
+// of the human's own just-made move).
 void cynusExecuteHighlightedMove(const SquareHighlight* highlights, size_t count);

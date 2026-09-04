@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "chessnut_board.h"
+#include "cynus_board.h"
 #include "ichessone_board.h"
 #include "millennium_board.h"
 #include "pgn_recorder.h"
@@ -372,8 +373,18 @@ void relayLedCommandToBoard(const uint8_t bytes8[8]) {
     case BoardType::IChessOne:
       ichessoneSetHighlightedSquares(highlights, count);
       break;
+    case BoardType::Cynus:
+      // Cynus has no per-square LEDs of its own -- forwarded instead to
+      // command its robot arm to execute the move, for normal human-vs-
+      // computer play (human moves their own side by hand, the connected
+      // app's engine plays the other side and the robot executes ITS
+      // moves). Not for a "bot plays both sides" self-play/replay mode --
+      // that's explicitly out of scope, see cynusExecuteHighlightedMove()'s
+      // own comment for why (2026-09-03/04 real-hardware incident and the
+      // echo-protection that now guards against it).
+      cynusExecuteHighlightedMove(highlights, count);
+      break;
     default:
-      // Cynus has no per-square LEDs of its own; nothing to relay.
       break;
   }
 }
@@ -486,7 +497,24 @@ void handleMainWrite(const uint8_t* data, size_t length) {
 
 class ServerCallbacks final : public NimBLEServerCallbacks {
  public:
-  void onConnect(NimBLEServer*, NimBLEConnInfo& info) override {
+  void onConnect(NimBLEServer* srv, NimBLEConnInfo& info) override {
+    // chessnutServerInit() and chesslink_server.cpp's own Init() both run
+    // unconditionally at boot and share one NimBLEServer
+    // (NimBLEDevice::createServer() is a singleton) -- so this service's
+    // characteristics stay live and connectable even when ChessLink
+    // masquerade was the one actually selected via the BT-BT queen gesture.
+    // A client that already knows this device's address/UUIDs from an
+    // earlier session (BLE enforces no per-service "not advertised" once
+    // directly connected) could connect here anyway and see total silence
+    // with no explanation. Reject outright instead -- confirmed real-
+    // hardware case, 2026-09-04 (see chesslink_server.cpp's matching fix).
+    if (!started) {
+      Serial.printf("[CHESSNUT] rejecting connection from %s -- Chessnut masquerade was not "
+                    "selected this session (ChessLink was); disconnecting\r\n",
+                    info.getAddress().toString().c_str());
+      srv->disconnect(info.getConnHandle());
+      return;
+    }
     connected = true;
     connHandle = info.getConnHandle();
     realTimeMode = false;
@@ -547,6 +575,10 @@ class MainWriteCallbacks final : public NimBLECharacteristicCallbacks {
     // Only queues raw bytes -- runs on the BLE host task's own (small)
     // stack, matching every other board driver's established
     // stack-overflow-avoidance pattern in this project.
+    // Per-characteristic callbacks are bound unconditionally in Init(), so
+    // this can fire even when ChessLink (not Chessnut) was actually
+    // selected -- see ServerCallbacks::onConnect's own comment.
+    if (!started) return;
     if (rxQueue == nullptr) return;
     const std::string value = characteristic->getValue();
     size_t offset = 0;
@@ -566,6 +598,13 @@ class MainWriteCallbacks final : public NimBLECharacteristicCallbacks {
 class BoardReadCallbacks final : public NimBLECharacteristicCallbacks {
  public:
   void onSubscribe(NimBLECharacteristic*, NimBLEConnInfo&, uint16_t subValue) override {
+    // See MainWriteCallbacks::onWrite's own comment -- this can fire for a
+    // non-selected mode too.
+    if (!started) {
+      Serial.println("[CHESSNUT] ignoring subscribe on board-read characteristic; Chessnut "
+                      "masquerade was not selected this session");
+      return;
+    }
     boardNotifyEnabled = subValue != 0;
     Serial.printf("[CHESSNUT] client %s notifications on board-read characteristic\r\n",
                   boardNotifyEnabled ? "enabled" : "disabled");
@@ -583,6 +622,9 @@ class BoardReadCallbacks final : public NimBLECharacteristicCallbacks {
 class MainReadCallbacks final : public NimBLECharacteristicCallbacks {
  public:
   void onSubscribe(NimBLECharacteristic*, NimBLEConnInfo&, uint16_t subValue) override {
+    // See MainWriteCallbacks::onWrite's own comment -- this can fire for a
+    // non-selected mode too.
+    if (!started) return;
     mainNotifyEnabled = subValue != 0;
     Serial.printf("[CHESSNUT] client %s notifications on main-read characteristic\r\n",
                   mainNotifyEnabled ? "enabled" : "disabled");

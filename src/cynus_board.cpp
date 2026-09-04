@@ -97,6 +97,19 @@ ExperimentalMode experimentalMode = ExperimentalMode::None;
 bool setPositionManualScanExpected = false;
 uint32_t nextFreeAnalysisScanAt = 0;
 
+// Set while the BT-BT masquerade queen gesture's extra queen is still on
+// the board, so that once it's removed again, the resulting exact-match-
+// to-board64 scan republishes the clean status instead of being silently
+// swallowed by the unchanged-position shortcut in handleFenLine() --
+// otherwise the globally cached status (used to prime a freshly-connecting
+// masquerade client) stays stuck showing the extra queen forever. User's
+// own diagnosis, 2026-09-04, confirmed on real hardware: BearChess/Chess
+// Dojo saw an invalid two-queens position on connect and showed nothing.
+// Deliberately lightweight (just a re-publish) -- an earlier attempt that
+// went through handleStartupBoard() also reset moveCycle/engineSide/
+// orientation, which interfered with an in-progress masquerade connection.
+bool btBtQueenGestureActive = false;
+
 constexpr size_t kMaxNotifyChunk = 64;
 
 struct RawPacket {
@@ -112,6 +125,14 @@ std::string rxLine;
 // Last move UCI actually sent to Cynus, so a King/Phoenix L-frame it keeps
 // retransmitting unchanged isn't re-sent every time.
 std::string lastSentMoveUci;
+
+// The most recent move WE detected the human make by hand (via camera scan
+// + inferMove()), so cynusExecuteHighlightedMove() can recognize a
+// connected Chessnut app's highlight command that's just an echo of that
+// same move (harmless visual confirmation for a passive LED board) rather
+// than a genuine new engine suggestion. See that function's own comment
+// for the real-hardware incident (2026-09-04) this fixes.
+std::string lastHumanMoveUci;
 
 // 0 = no automatic startup rescan pending. Set by handleStartupBoard() when
 // the scanned position isn't a valid start position yet; consumed by
@@ -1230,7 +1251,24 @@ void handleFenLine(const std::string& fen) {
 
   // syncState == Ready is only ever reached via handleStartupBoard(), which
   // already sets board64 -- so a confirmed board is always available here.
-  if (boardsEqual(scanned, board64)) return;  // unchanged, nothing to do
+  if (boardsEqual(scanned, board64)) {
+    if (btBtQueenGestureActive) {
+      // The gesture's extra queen was just removed again -- the globally
+      // cached status is still the 2-queens snapshot from when the gesture
+      // was detected (nothing else republishes on a no-op "unchanged"
+      // scan). Refresh it now so a freshly-connecting masquerade client
+      // gets the real, valid starting position instead, and show "POS OK"
+      // so the player has visual confirmation it's safe to start -- user's
+      // own explicit request. Deliberately no moveCycle/engineSide/
+      // orientation reset, unlike handleStartupBoard() -- that's what
+      // disrupted an in-progress masquerade connection last time.
+      btBtQueenGestureActive = false;
+      Serial.println("[CYNUS] BT-BT masquerade queen removed; refreshing cached status");
+      cynusDisplay("POS OK");
+      publishStatus();
+    }
+    return;  // unchanged, nothing to do
+  }
 
   // A scan showing the pristine starting position, seen at ANY point mid-
   // game (not just right after connect), means the human physically reset
@@ -1266,6 +1304,7 @@ void handleFenLine(const std::string& fen) {
       // the extra queen again cleanly resumes whatever was confirmed
       // before (no PGN/move-tracking disruption).
       Serial.println("[CYNUS] BT-BT masquerade queen gesture detected; forwarding as a raw snapshot");
+      btBtQueenGestureActive = true;
       publishBoard(scanned);
       return;
     }
@@ -1301,6 +1340,7 @@ void handleFenLine(const std::string& fen) {
     }
   }
   setMoveCycle(MoveCycle::WaitEngineMove);
+  lastHumanMoveUci = uci;
   const std::string humanDisplayMove = moveDisplayText(uci);
   if (!humanDisplayMove.empty()) cynusDisplay(humanDisplayMove);
 
@@ -1477,7 +1517,9 @@ void resetConnectionState() {
   experimentalMode = ExperimentalMode::None;
   setPositionManualScanExpected = false;
   nextFreeAnalysisScanAt = 0;
+  btBtQueenGestureActive = false;
   lastSentMoveUci.clear();
+  lastHumanMoveUci.clear();
   nextStartupRescanAt = 0;
   initialScanAt = 0;
   startupManualOverrideArmed = false;
@@ -1629,22 +1671,37 @@ void cynusShowText(const char* text) {
 // A connected Chessnut-protocol client's "light these squares" command
 // reaches us via chessnut_server.cpp's relayLedCommandToBoard() -- just a
 // bitmask, no source/destination distinction, no per-square LEDs on Cynus
-// to actually light. User's own request, 2026-09-03, originally scoped to
-// Chess PGN Master's "replay this game" feature specifically and gated
-// behind a manual Replay-mode toggle (black king on b5) -- but real-
-// hardware testing the same day against Chess Dojo (a live-play Chessnut
-// client, not just a replay tool) showed this highlight command is the
-// ONLY way any Chessnut client tells the board what move to make at all,
-// live play included -- gating it behind an opt-in toggle silently broke
-// ordinary play. Now unconditional: every 2-square highlight is decoded
-// and, if it resolves to a plausible move, sent to ManyaCynus's own robot
-// arm via commitMoveToRobot(), exactly like a King/Phoenix-suggested move
-// already is. Source/destination resolved from the two highlighted
-// squares via board occupancy, same heuristic as the King/Phoenix
-// 'L'-frame path (resolveAlternatingPair()); anything else (wrong square
-// count -- e.g. an app's own LED test/reset flood -- or ambiguous
-// occupancy) is logged and skipped rather than guessed at.
+// to actually light. Forwarded to ManyaCynus's own robot arm instead, for
+// normal human-vs-computer play: the human moves their own side by hand,
+// the connected app's engine plays the other side, and the robot executes
+// ITS moves -- user's own explicit intent, always the point of this path.
+//
+// Real-hardware incident 2026-09-04: this same highlight command is ALSO
+// used by at least one client (Chess Dojo) to ECHO a move it just observed
+// the human make by hand (harmless visual feedback for a passive LED
+// board), not only to suggest the engine's own move. Executing every echo
+// via the robot made it re-grab a piece the human had already placed
+// correctly (a king, right after a hand-played castling). moveCycle alone
+// can't tell these apart, since a human move already transitions straight
+// to WaitEngineMove before any such echo arrives -- the real distinguishing
+// signal is the move itself: an echo is always textually identical to the
+// human move we ourselves just detected and forwarded (lastHumanMoveUci); a
+// genuine new engine suggestion essentially never is.
 void cynusExecuteHighlightedMove(const SquareHighlight* highlights, size_t count) {
+  if (experimentalMode != ExperimentalMode::None) {
+    // Free Analysis (and Set Position) forward/accept raw positions with no
+    // legality tracking at all -- there's no well-defined "the computer's
+    // move" to execute via the robot while either is active, on any
+    // transport (cable or a connected Chessnut app alike).
+    Serial.println("[CYNUS] highlighted-move command ignored; an experimental mode is active");
+    return;
+  }
+  if (syncState != SyncState::Ready ||
+      !(moveCycle == MoveCycle::WaitEngineMove || moveCycle == MoveCycle::WaitFirstMove)) {
+    Serial.println("[CYNUS] highlighted-move command ignored; not currently the chess computer's "
+                    "turn to suggest a move");
+    return;
+  }
   if (count != 2) {
     Serial.printf("[CYNUS] highlighted-move command has %u square(s), expected 2 -- ignored\r\n",
                   static_cast<unsigned>(count));
@@ -1669,6 +1726,12 @@ void cynusExecuteHighlightedMove(const SquareHighlight* highlights, size_t count
     return;
   }
   const std::string uci = squareName(source % 8, source / 8) + squareName(destination % 8, destination / 8);
+  if (uci == lastHumanMoveUci) {
+    Serial.printf("[CYNUS] highlighted-move command decoded as %s -- matches the human's own last "
+                  "move, treating as an echo and ignoring\r\n",
+                  uci.c_str());
+    return;
+  }
   Serial.printf("[CYNUS] highlighted-move command decoded as %s -- commanding robot\r\n",
                 uci.c_str());
   commitMoveToRobot(uci);
